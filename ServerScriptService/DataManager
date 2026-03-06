@@ -1,0 +1,334 @@
+--[[
+    DataManager (ModuleScript)
+    
+    Central module for all player data.
+    Other server scripts require() this directly.
+    No more BindableEvents — direct function calls.
+]]
+
+local Players = game:GetService("Players")
+local DataStoreService = game:GetService("DataStoreService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local PlayerDataConfig = require(ReplicatedStorage:WaitForChild("PlayerDataConfig"))
+local PlayerStore = DataStoreService:GetDataStore("ProjectSystem_PlayerData_v4.08")
+
+local DataManager = {}
+
+-- All active player data lives here
+local ActiveData = {}
+
+local AUTO_SAVE_INTERVAL = 120
+
+------------------------------------------------------------------------
+-- HELPERS
+------------------------------------------------------------------------
+
+local function DeepCopy(original)
+	local copy = {}
+	for key, value in pairs(original) do
+		if type(value) == "table" then
+			copy[key] = DeepCopy(value)
+		else
+			copy[key] = value
+		end
+	end
+	return copy
+end
+
+local function Reconcile(data, defaults)
+	for key, defaultValue in pairs(defaults) do
+		if data[key] == nil then
+			if type(defaultValue) == "table" then
+				data[key] = DeepCopy(defaultValue)
+			else
+				data[key] = defaultValue
+			end
+		end
+	end
+	return data
+end
+
+------------------------------------------------------------------------
+-- SYNC DISPLAY VALUES
+-- This is the function that pushes data to the StringValues/IntValues
+-- on the player object so the client can read them.
+------------------------------------------------------------------------
+
+local function SyncDisplayValues(player, data)
+	if not player or not data then return end
+
+	-- Leaderstats
+	local leaderstats = player:FindFirstChild("leaderstats")
+	if leaderstats then
+		local rankStat = leaderstats:FindFirstChild("Rank")
+		if rankStat then rankStat.Value = data.Rank or "E" end
+
+		local expStat = leaderstats:FindFirstChild("EXP")
+		if expStat then expStat.Value = data.EXP or 0 end
+
+		local killsStat = leaderstats:FindFirstChild("Kills")
+		if killsStat then killsStat.Value = data.PlayersKilled or 0 end
+	end
+
+	-- Display values for leaderboard + overhead
+	local charDisplay = player:FindFirstChild("CharacterDisplayName")
+	if charDisplay then
+		charDisplay.Value = (data.CharacterName ~= "" and data.CharacterName) or player.Name
+	end
+
+	local clanDisplay = player:FindFirstChild("ClanDisplay")
+	if clanDisplay then
+		clanDisplay.Value = data.Clan or ""
+	end
+
+	local clanRarity = player:FindFirstChild("ClanRarity")
+	if clanRarity then
+		clanRarity.Value = data.ClanRarity or ""
+	end
+
+	local factionDisplay = player:FindFirstChild("FactionDisplay")
+	if factionDisplay then
+		factionDisplay.Value = data.Faction or ""
+	end
+
+	local createdFlag = player:FindFirstChild("CharacterCreatedFlag")
+	if createdFlag then
+		createdFlag.Value = data.CharacterCreated or false
+	end
+	
+	-- Weapon display
+	
+	local weaponDisplay = player:FindFirstChild("EquippedWeaponDisplay")
+	if not weaponDisplay then
+		weaponDisplay = Instance.new("StringValue")
+		weaponDisplay.Name = "EquippedWeaponDisplay"
+		weaponDisplay.Parent = player
+	end
+	weaponDisplay.Value = data.EquippedWeapon or "iron_blade"
+end
+
+------------------------------------------------------------------------
+-- CORE DATA FUNCTIONS
+------------------------------------------------------------------------
+
+local function LoadData(player)
+	local key = "Player_" .. player.UserId
+
+	local success, result = pcall(function()
+		return PlayerStore:GetAsync(key)
+	end)
+
+	if success then
+		if result then
+			local data = Reconcile(result, PlayerDataConfig.Defaults)
+			data.FirstJoin = false
+			print("[DataManager] Loaded data for " .. player.Name)
+			return data
+		else
+			local data = DeepCopy(PlayerDataConfig.Defaults)
+			data.FirstJoin = true
+			print("[DataManager] New player " .. player.Name .. " - created default data")
+			return data
+		end
+	else
+		warn("[DataManager] FAILED to load data for " .. player.Name .. ": " .. tostring(result))
+		local data = DeepCopy(PlayerDataConfig.Defaults)
+		data._loadFailed = true
+		return data
+	end
+end
+
+local function SaveData(player)
+	local data = ActiveData[player.UserId]
+	if not data then return false end
+	if data._loadFailed then
+		warn("[DataManager] Skipping save for " .. player.Name .. " - original load failed")
+		return false
+	end
+
+	local key = "Player_" .. player.UserId
+	local saveData = DeepCopy(data)
+	saveData._loadFailed = nil
+
+	local success, err = pcall(function()
+		PlayerStore:SetAsync(key, saveData)
+	end)
+
+	if success then
+		print("[DataManager] Saved data for " .. player.Name)
+		return true
+	else
+		warn("[DataManager] FAILED to save data for " .. player.Name .. ": " .. tostring(err))
+		return false
+	end
+end
+
+------------------------------------------------------------------------
+-- PUBLIC API — other scripts call these directly
+------------------------------------------------------------------------
+
+function DataManager.GetData(player)
+	return ActiveData[player.UserId]
+end
+
+function DataManager.SetValue(player, key, value)
+	local data = ActiveData[player.UserId]
+	if not data then
+		warn("[DataManager] No data for " .. player.Name .. " when setting " .. key)
+		return
+	end
+
+	data[key] = value
+
+	-- Immediately sync to display values
+	SyncDisplayValues(player, data)
+
+	print("[DataManager] Set " .. key .. " = " .. tostring(value) .. " for " .. player.Name)
+end
+
+function DataManager.SetMultiple(player, values)
+	local data = ActiveData[player.UserId]
+	if not data then
+		warn("[DataManager] No data for " .. player.Name)
+		return
+	end
+
+	for key, value in pairs(values) do
+		data[key] = value
+	end
+
+	-- Sync once after all values are set
+	SyncDisplayValues(player, data)
+
+	print("[DataManager] Set multiple values for " .. player.Name)
+end
+
+------------------------------------------------------------------------
+-- PLAYER JOIN
+------------------------------------------------------------------------
+
+local function OnPlayerAdded(player)
+	local data = LoadData(player)
+	ActiveData[player.UserId] = data
+
+	-- Create leaderstats
+	local leaderstats = Instance.new("Folder")
+	leaderstats.Name = "leaderstats"
+	leaderstats.Parent = player
+
+	local rankStat = Instance.new("StringValue")
+	rankStat.Name = "Rank"
+	rankStat.Value = data.Rank
+	rankStat.Parent = leaderstats
+
+	local expStat = Instance.new("IntValue")
+	expStat.Name = "EXP"
+	expStat.Value = data.EXP
+	expStat.Parent = leaderstats
+
+	local killsStat = Instance.new("IntValue")
+	killsStat.Name = "Kills"
+	killsStat.Value = data.PlayersKilled
+	killsStat.Parent = leaderstats
+
+	-- Create display StringValues
+	local charName = Instance.new("StringValue")
+	charName.Name = "CharacterDisplayName"
+	charName.Value = (data.CharacterName ~= "" and data.CharacterName) or player.Name
+	charName.Parent = player
+
+	local clanDisplay = Instance.new("StringValue")
+	clanDisplay.Name = "ClanDisplay"
+	clanDisplay.Value = data.Clan or ""
+	clanDisplay.Parent = player
+
+	local clanRarity = Instance.new("StringValue")
+	clanRarity.Name = "ClanRarity"
+	clanRarity.Value = data.ClanRarity or ""
+	clanRarity.Parent = player
+
+	local factionDisplay = Instance.new("StringValue")
+	factionDisplay.Name = "FactionDisplay"
+	factionDisplay.Value = data.Faction or ""
+	factionDisplay.Parent = player
+
+	local createdFlag = Instance.new("BoolValue")
+	createdFlag.Name = "CharacterCreatedFlag"
+	createdFlag.Value = data.CharacterCreated or false
+	createdFlag.Parent = player
+	
+	-- Weapon display
+	local weaponDisplay = Instance.new("StringValue")
+	weaponDisplay.Name = "EquippedWeaponDisplay"
+	weaponDisplay.Value = data.EquippedWeapon or "iron_blade"
+	weaponDisplay.Parent = player
+
+	if data.CharacterCreated then
+		print("[DataManager] " .. player.Name .. " has existing character: " .. data.CharacterName)
+	else
+		print("[DataManager] " .. player.Name .. " needs to create a character")
+	end
+end
+
+------------------------------------------------------------------------
+-- PLAYER LEAVE
+------------------------------------------------------------------------
+
+local function OnPlayerRemoving(player)
+	SaveData(player)
+	ActiveData[player.UserId] = nil
+end
+
+------------------------------------------------------------------------
+-- CONNECTIONS
+------------------------------------------------------------------------
+
+Players.PlayerAdded:Connect(OnPlayerAdded)
+Players.PlayerRemoving:Connect(OnPlayerRemoving)
+
+-- Handle players already in game (in case module loads late)
+for _, player in ipairs(Players:GetPlayers()) do
+	if not ActiveData[player.UserId] then
+		task.spawn(function()
+			OnPlayerAdded(player)
+		end)
+	end
+end
+
+------------------------------------------------------------------------
+-- AUTO-SAVE
+------------------------------------------------------------------------
+
+task.spawn(function()
+	while true do
+		task.wait(AUTO_SAVE_INTERVAL)
+		print("[DataManager] Auto-saving all player data...")
+		for userId, _ in pairs(ActiveData) do
+			local player = Players:GetPlayerByUserId(userId)
+			if player then
+				SaveData(player)
+			else
+				ActiveData[userId] = nil
+			end
+		end
+	end
+end)
+
+------------------------------------------------------------------------
+-- SHUTDOWN SAFETY
+------------------------------------------------------------------------
+
+game:BindToClose(function()
+	print("[DataManager] Server shutting down - saving all data...")
+	for userId, _ in pairs(ActiveData) do
+		local player = Players:GetPlayerByUserId(userId)
+		if player then
+			SaveData(player)
+		end
+	end
+end)
+
+print("[DataManager] System initialized. PROJECT//:SYSTEM is online.")
+
+return DataManager
