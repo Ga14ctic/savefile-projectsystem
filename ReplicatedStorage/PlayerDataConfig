@@ -1,0 +1,167 @@
+--[[
+    PlayerDataConfig
+    Defines the default data every new player starts with.
+    Updated with character creation fields.
+]]
+
+local PlayerDataConfig = {}
+
+PlayerDataConfig.Defaults = {
+	-- CHARACTER CREATION (filled in during creation screen)
+	CharacterName = "",            -- The name they chose
+	Gender = "",                   -- "Male" or "Female"
+	Clan = "",                     -- Randomly assigned clan
+	ClanRarity = "",               -- Common, Uncommon, Rare, Epic, Legendary
+	Faction = "",                  -- Which faction they chose
+	CharacterCreated = false,      -- Have they finished character creation?
+
+	-- RANK SYSTEM
+	Rank = "E",
+	RankTitle = "Unranked Hunter",
+
+	-- EXP SYSTEM
+	EXP = 0,
+	GripEXP = 0,
+	EventEXP = 0,
+	TotalEXPEarned = 0,
+
+	-- COMBAT STATS
+	Level = 1,
+	Strength = 10,
+	Agility = 10,
+	Endurance = 10,
+	Intelligence = 10,
+	StatPoints = 0,
+
+	-- RESOURCES
+	HP = 100,
+	MaxHP = 100,
+	Mana = 100,
+	MaxMana = 100,
+
+	-- PROGRESSION
+	MissionsCompleted = 0,
+	PlayersKilled = 0,
+	GatesCleared = 0,
+	Deaths = 0,
+
+	-- ABILITIES
+	Awakening = "None",
+	Abilities = {},
+
+	-- INVENTORY
+	Inventory = {},
+	Gold = 0,
+
+	-- FACTION
+	-- (Faction field is above in character creation)
+
+	-- META
+	FirstJoin = true,
+	PlayTime = 0,
+	-- SKILL TREE
+	SkillPoints = 40,               -- Unspent skill points
+	TotalSkillPoints = 0,          -- Total skill points ever earned
+	StrengthPoints = 0,            -- Points invested in Strength tree
+	DexterityPoints = 0,           -- Points invested in Dexterity tree
+	MasteryPoints = 0,             -- Points invested in Mastery tree
+	EquippedMoves = {},     
+	
+	-- GUILDS
+	OfficialGuild = "",            -- Guild ID ("hunters", "fame", "fiend", "knights", "monarch")
+	OfficialGuildRank = "",        -- Rank within the guild ("Member", "Officer", "Leader", etc)
+	UnofficialGuild = "",          -- Name of unofficial guild
+	UnofficialGuildTag = "",       -- Short tag for display [TAG]-- {[1] = "Heavy Blow", [2] = "Flash Step", ...}
+	-- WEAPON
+	EquippedWeapon = "iron_blade",  -- Default weapon
+	OwnedWeapons = {"iron_blade"},  -- Weapons the player owns
+}
+
+-- Rank thresholds
+PlayerDataConfig.RankRequirements = {
+	E = 0,
+	D = 500,
+	C = 2000,
+	B = 8000,
+	A = 25000,
+	S = 100000,
+}
+
+PlayerDataConfig.RankOrder = {"E", "D", "C", "B", "A", "S"}
+
+PlayerDataConfig.StatPointsPerRank = {
+	D = 5,
+	C = 8,
+	B = 12,
+	A = 18,
+	S = 25,
+}
+
+------------------------------------------------------------------------
+-- CLAN SYSTEM
+------------------------------------------------------------------------
+
+-- Rarity roll chances (must add up to 100)
+PlayerDataConfig.ClanRarityChances = {
+	{Rarity = "Common",    Chance = 50},    -- 50% chance
+	{Rarity = "Uncommon",  Chance = 25},    -- 25% chance
+	{Rarity = "Rare",      Chance = 15},    -- 15% chance
+	{Rarity = "Epic",      Chance = 8},     -- 8% chance
+	{Rarity = "Legendary", Chance = 2},     -- 2% chance
+}
+
+-- Clans sorted by rarity
+-- These are Solo Levelling inspired - modify as you want
+PlayerDataConfig.Clans = {
+	Common = {
+		"Park", "Kim", "Lee", "Jung", "Choi",
+		"Han", "Yoon", "Kang", "Shin", "Oh",
+	},
+	Uncommon = {
+		"Baek", "Hwang", "Song", "Ahn", "Noh",
+		"Yoo", "Seo", "Moon", "Tak",
+	},
+	Rare = {
+		"Cha", "Go", "Woo", "Jin", "Lim",
+		"Jegal", "Dokgo",
+	},
+	Epic = {
+		"Sung", "Cheon", "Ashborn", "Kamish",
+	},
+	Legendary = {
+		"Monarch", "Ruler",
+	},
+}
+
+-- Colors for each rarity (used in UI and leaderboard)
+PlayerDataConfig.RarityColors = {
+	Common    = Color3.fromRGB(200, 200, 200),  -- Grey
+	Uncommon  = Color3.fromRGB(80, 200, 80),    -- Green
+	Rare      = Color3.fromRGB(60, 130, 255),   -- Blue
+	Epic      = Color3.fromRGB(180, 60, 255),   -- Purple
+	Legendary = Color3.fromRGB(255, 200, 40),   -- Gold
+}
+
+------------------------------------------------------------------------
+-- FACTIONS
+------------------------------------------------------------------------
+
+PlayerDataConfig.Factions = {
+	{
+		Name = "Hunters Guild",
+		Description = "The official guild sanctioned by the Hunter Association. Structured, disciplined, powerful.",
+		Color = Color3.fromRGB(60, 130, 255),  -- Blue
+	},
+	{
+		Name = "Shadow Legion",
+		Description = "Those who walk in darkness. Independent hunters who answer to no guild. Ruthless.",
+		Color = Color3.fromRGB(120, 40, 200),  -- Purple
+	},
+	{
+		Name = "Red Gate",
+		Description = "Born from the chaos of dungeon breaks. They believe only the strong deserve to survive.",
+		Color = Color3.fromRGB(220, 40, 40),   -- Red
+	},
+}
+
+return PlayerDataConfig
