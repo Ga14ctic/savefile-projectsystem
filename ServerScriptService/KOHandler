@@ -1,0 +1,547 @@
+--[[
+    KOHandler (ModuleScript)
+    
+    Handles the Knockout system:
+    - When HP hits 0, player is knocked out (NOT killed)
+    - KO'd players lay on the ground, can't move
+    - Other players can Carry (V) or Grip/Execute (B)
+    - Carry: pick up the KO'd player, walk around with them
+    - Grip: 2-second channel to execute. Interruptible.
+    - Getting hit while carrying = drop the person
+    - Getting hit while gripping = cancel the execution
+    
+    KO'd players auto-die after 30 seconds if not gripped or rescued.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+
+local DataManager = require(ServerScriptService:WaitForChild("DataManager"))
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+
+local KOHandler = {}
+
+------------------------------------------------------------------------
+-- CREATE REMOTES
+------------------------------------------------------------------------
+
+local KOAction = Instance.new("RemoteEvent")
+KOAction.Name = "KOAction"
+KOAction.Parent = Remotes
+
+local KOFeedback = Instance.new("RemoteEvent")
+KOFeedback.Name = "KOFeedback"
+KOFeedback.Parent = Remotes
+
+------------------------------------------------------------------------
+-- CONSTANTS
+------------------------------------------------------------------------
+
+local KO_DURATION = 30          -- Seconds before auto-death if not gripped
+local GRIP_CHANNEL_TIME = 2.0   -- Seconds to channel the grip/execute
+local CARRY_WELD_OFFSET = CFrame.new(1.5, 0.5, 0) * CFrame.Angles(0, 0, math.rad(15))
+
+------------------------------------------------------------------------
+-- STATE TRACKING
+------------------------------------------------------------------------
+
+-- [UserId] = {IsKO, KOTime, CarriedBy, CarryingWho, IsGripping, GripTarget, GripStartTime}
+local KOStates = {}
+
+local function GetKOState(player)
+	if not KOStates[player.UserId] then
+		KOStates[player.UserId] = {
+			IsKO = false,
+			KOTime = 0,
+			CarriedBy = nil,         -- Player carrying this KO'd player
+			CarryingWho = nil,       -- Who this player is carrying
+			IsGripping = false,
+			GripTarget = nil,
+			GripStartTime = 0,
+		}
+	end
+	return KOStates[player.UserId]
+end
+
+------------------------------------------------------------------------
+-- KO A PLAYER (called when HP reaches 0)
+------------------------------------------------------------------------
+
+function KOHandler.KnockOut(player)
+	local char = player.Character
+	if not char then return end
+
+	local humanoid = char:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return end
+
+	local state = GetKOState(player)
+	if state.IsKO then return end -- Already KO'd
+
+	state.IsKO = true
+	state.KOTime = os.clock()
+
+	-- Set HP to 1 so they don't actually die
+	humanoid.Health = 1
+
+	-- Disable movement
+	humanoid.WalkSpeed = 0
+	humanoid.JumpPower = 0
+	humanoid.AutoRotate = false
+
+	-- Force into ragdoll-like state (PlatformStand)
+	humanoid.PlatformStand = true
+
+	-- Notify all clients
+	KOFeedback:FireAllClients("PlayerKO", player, char)
+
+	print("[KO] " .. player.Name .. " has been knocked out!")
+
+	-- Auto-death timer
+	task.delay(KO_DURATION, function()
+		local currentState = GetKOState(player)
+		if currentState.IsKO then
+			-- Still KO'd after timer — actually kill them
+			KOHandler.FinishOff(player, nil)
+		end
+	end)
+end
+
+------------------------------------------------------------------------
+-- REVIVE (get back up — future mechanic, for now just resets state)
+------------------------------------------------------------------------
+
+function KOHandler.Revive(player)
+	local char = player.Character
+	if not char then return end
+
+	local humanoid = char:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return end
+
+	local state = GetKOState(player)
+	state.IsKO = false
+
+	-- If being carried, drop first
+	if state.CarriedBy then
+		KOHandler.DropCarried(state.CarriedBy)
+	end
+
+	-- Restore movement
+	humanoid.WalkSpeed = 16
+	humanoid.JumpPower = 50
+	humanoid.AutoRotate = true
+	humanoid.PlatformStand = false
+	humanoid.Health = humanoid.MaxHealth * 0.3 -- Revive at 30% HP
+
+	KOFeedback:FireAllClients("PlayerRevive", player)
+
+	print("[KO] " .. player.Name .. " has been revived!")
+end
+
+------------------------------------------------------------------------
+-- FINISH OFF (actually kill them)
+------------------------------------------------------------------------
+
+function KOHandler.FinishOff(player, killer)
+	local char = player.Character
+	if not char then return end
+
+	local humanoid = char:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return end
+
+	local state = GetKOState(player)
+
+	-- If being carried, drop first
+	if state.CarriedBy then
+		KOHandler.DropCarried(state.CarriedBy)
+	end
+
+	-- Reset state
+	state.IsKO = false
+	state.CarriedBy = nil
+
+	-- Restore normal properties so death works properly
+	humanoid.PlatformStand = false
+	humanoid.WalkSpeed = 16
+	humanoid.JumpPower = 50
+	humanoid.AutoRotate = true
+
+	-- Actually kill them
+	humanoid.Health = 0
+
+	-- Track kill
+	if killer then
+		local killerData = DataManager.GetData(killer)
+		if killerData then
+			DataManager.SetValue(killer, "PlayersKilled", (killerData.PlayersKilled or 0) + 1)
+		end
+
+		local victimData = DataManager.GetData(player)
+		if victimData then
+			DataManager.SetValue(player, "Deaths", (victimData.Deaths or 0) + 1)
+		end
+
+		KOFeedback:FireAllClients("PlayerGripped", killer, player)
+		print("[KO] " .. killer.Name .. " executed " .. player.Name .. "!")
+	else
+		KOFeedback:FireAllClients("PlayerTimedOut", player)
+		print("[KO] " .. player.Name .. " timed out and died.")
+	end
+end
+
+------------------------------------------------------------------------
+-- CARRY (V)
+------------------------------------------------------------------------
+
+function KOHandler.StartCarry(carrier, target)
+	local carrierChar = carrier.Character
+	local targetChar = target.Character
+	if not carrierChar or not targetChar then return end
+
+	local carrierState = GetKOState(carrier)
+	local targetState = GetKOState(target)
+
+	-- Carrier can't be KO'd themselves
+	if carrierState.IsKO then return end
+
+	-- Target must be KO'd
+	if not targetState.IsKO then return end
+
+	-- Can't carry if already carrying someone
+	if carrierState.CarryingWho then return end
+
+	-- Can't carry if target is already being carried
+	if targetState.CarriedBy then return end
+
+	-- Distance check
+	local carrierRoot = carrierChar:FindFirstChild("HumanoidRootPart")
+	local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+	if not carrierRoot or not targetRoot then return end
+
+	local distance = (carrierRoot.Position - targetRoot.Position).Magnitude
+	if distance > 10 then return end
+
+	-- Set up carry
+	carrierState.CarryingWho = target
+	targetState.CarriedBy = carrier
+
+	-- Weld the target to the carrier
+	local weld = Instance.new("WeldConstraint")
+	weld.Name = "CarryWeld"
+	weld.Part0 = carrierRoot
+	weld.Part1 = targetRoot
+	weld.Parent = carrierRoot
+
+	-- Position the carried player on the shoulder
+	targetRoot.CFrame = carrierRoot.CFrame * CARRY_WELD_OFFSET
+
+	-- Slow down the carrier a bit
+	local carrierHumanoid = carrierChar:FindFirstChildOfClass("Humanoid")
+	if carrierHumanoid then
+		carrierHumanoid.WalkSpeed = 10 -- Slower while carrying
+	end
+
+	KOFeedback:FireAllClients("CarryStart", carrier, target)
+
+	print("[KO] " .. carrier.Name .. " is carrying " .. target.Name)
+end
+
+------------------------------------------------------------------------
+-- DROP CARRIED PLAYER
+------------------------------------------------------------------------
+
+function KOHandler.DropCarried(carrier)
+	local carrierChar = carrier.Character
+	if not carrierChar then return end
+
+	local carrierState = GetKOState(carrier)
+	local target = carrierState.CarryingWho
+	if not target then return end
+
+	local targetState = GetKOState(target)
+
+	-- Remove weld
+	local carrierRoot = carrierChar:FindFirstChild("HumanoidRootPart")
+	if carrierRoot then
+		local weld = carrierRoot:FindFirstChild("CarryWeld")
+		if weld then weld:Destroy() end
+	end
+
+	-- Reset states
+	carrierState.CarryingWho = nil
+	targetState.CarriedBy = nil
+
+	-- Restore carrier speed
+	local carrierHumanoid = carrierChar:FindFirstChildOfClass("Humanoid")
+	if carrierHumanoid then
+		carrierHumanoid.WalkSpeed = 16
+	end
+
+	KOFeedback:FireAllClients("CarryDrop", carrier, target)
+
+	print("[KO] " .. carrier.Name .. " dropped " .. target.Name)
+end
+
+------------------------------------------------------------------------
+-- GRIP / EXECUTE (B) — 2 second channel
+------------------------------------------------------------------------
+
+function KOHandler.StartGrip(gripper, target)
+	local gripperChar = gripper.Character
+	local targetChar = target.Character
+	if not gripperChar or not targetChar then return end
+
+	local gripperState = GetKOState(gripper)
+	local targetState = GetKOState(target)
+
+	-- Gripper can't be KO'd
+	if gripperState.IsKO then return end
+
+	-- Target must be KO'd
+	if not targetState.IsKO then return end
+
+	-- Can't grip while already gripping
+	if gripperState.IsGripping then return end
+
+	-- If carrying someone else, drop them first
+	if gripperState.CarryingWho and gripperState.CarryingWho ~= target then
+		KOHandler.DropCarried(gripper)
+	end
+
+	-- If target is being carried by someone else, can't grip
+	if targetState.CarriedBy and targetState.CarriedBy ~= gripper then
+		return
+	end
+
+	-- Distance check (unless carrying them)
+	local gripperRoot = gripperChar:FindFirstChild("HumanoidRootPart")
+	local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+	if not gripperRoot or not targetRoot then return end
+
+	if targetState.CarriedBy ~= gripper then
+		local distance = (gripperRoot.Position - targetRoot.Position).Magnitude
+		if distance > 10 then return end
+	end
+
+	-- If carrying them, drop first so the execute animation looks right
+	if targetState.CarriedBy == gripper then
+		KOHandler.DropCarried(gripper)
+	end
+
+	-- Start grip channel
+	gripperState.IsGripping = true
+	gripperState.GripTarget = target
+	gripperState.GripStartTime = os.clock()
+
+	-- Lock gripper in place during channel
+	local gripperHumanoid = gripperChar:FindFirstChildOfClass("Humanoid")
+	if gripperHumanoid then
+		gripperHumanoid.WalkSpeed = 0
+		gripperHumanoid.AutoRotate = false
+	end
+
+	-- Notify clients (start VFX/animation)
+	KOFeedback:FireAllClients("GripStart", gripper, target)
+
+	print("[KO] " .. gripper.Name .. " is gripping " .. target.Name .. "...")
+
+	-- Channel for GRIP_CHANNEL_TIME seconds
+	task.delay(GRIP_CHANNEL_TIME, function()
+		local currentState = GetKOState(gripper)
+
+		-- Check if grip was cancelled (by being hit, etc)
+		if not currentState.IsGripping or currentState.GripTarget ~= target then
+			return
+		end
+
+		-- Grip completed — execute the target
+		currentState.IsGripping = false
+		currentState.GripTarget = nil
+
+		-- Restore gripper movement
+		if gripperHumanoid then
+			gripperHumanoid.WalkSpeed = 16
+			gripperHumanoid.AutoRotate = true
+		end
+
+		-- Kill the target
+		KOHandler.FinishOff(target, gripper)
+	end)
+end
+
+------------------------------------------------------------------------
+-- CANCEL GRIP (when gripper gets hit)
+------------------------------------------------------------------------
+
+function KOHandler.CancelGrip(gripper)
+	local gripperState = GetKOState(gripper)
+
+	if not gripperState.IsGripping then return end
+
+	local target = gripperState.GripTarget
+
+	gripperState.IsGripping = false
+	gripperState.GripTarget = nil
+
+	-- Restore gripper movement
+	local gripperChar = gripper.Character
+	if gripperChar then
+		local hum = gripperChar:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.WalkSpeed = 16
+			hum.AutoRotate = true
+		end
+	end
+
+	KOFeedback:FireAllClients("GripCancel", gripper, target)
+
+	print("[KO] " .. gripper.Name .. "'s grip was interrupted!")
+end
+
+------------------------------------------------------------------------
+-- CALLED WHEN A PLAYER TAKES DAMAGE (from CombatHandler)
+------------------------------------------------------------------------
+
+function KOHandler.OnPlayerDamaged(player, attacker)
+	local state = GetKOState(player)
+
+	-- If they're carrying someone, drop them
+	if state.CarryingWho then
+		KOHandler.DropCarried(player)
+	end
+
+	-- If they're gripping someone, cancel it
+	if state.IsGripping then
+		KOHandler.CancelGrip(player)
+	end
+end
+
+------------------------------------------------------------------------
+-- REMOTE HANDLER
+------------------------------------------------------------------------
+
+KOAction.OnServerEvent:Connect(function(player, action, targetPlayerName)
+	local state = GetKOState(player)
+
+	if action == "Carry" then
+		-- Find the closest KO'd player or specific target
+		if targetPlayerName then
+			local target = nil
+			for _, p in ipairs(Players:GetPlayers()) do
+				if p.Name == targetPlayerName then
+					target = p
+					break
+				end
+			end
+			if target then
+				KOHandler.StartCarry(player, target)
+			end
+		else
+			-- Find closest KO'd player
+			local char = player.Character
+			if not char then return end
+			local root = char:FindFirstChild("HumanoidRootPart")
+			if not root then return end
+
+			local closest = nil
+			local closestDist = 10
+
+			for _, p in ipairs(Players:GetPlayers()) do
+				if p ~= player then
+					local pState = GetKOState(p)
+					if pState.IsKO and not pState.CarriedBy then
+						local pChar = p.Character
+						local pRoot = pChar and pChar:FindFirstChild("HumanoidRootPart")
+						if pRoot then
+							local dist = (root.Position - pRoot.Position).Magnitude
+							if dist < closestDist then
+								closest = p
+								closestDist = dist
+							end
+						end
+					end
+				end
+			end
+
+			if closest then
+				KOHandler.StartCarry(player, closest)
+			end
+		end
+
+	elseif action == "Drop" then
+		KOHandler.DropCarried(player)
+
+	elseif action == "Grip" then
+		-- Find closest KO'd player or carried player
+		if state.CarryingWho then
+			-- Grip the person you're carrying
+			KOHandler.StartGrip(player, state.CarryingWho)
+		else
+			-- Find closest KO'd player
+			local char = player.Character
+			if not char then return end
+			local root = char:FindFirstChild("HumanoidRootPart")
+			if not root then return end
+
+			local closest = nil
+			local closestDist = 10
+
+			for _, p in ipairs(Players:GetPlayers()) do
+				if p ~= player then
+					local pState = GetKOState(p)
+					if pState.IsKO then
+						local pChar = p.Character
+						local pRoot = pChar and pChar:FindFirstChild("HumanoidRootPart")
+						if pRoot then
+							local dist = (root.Position - pRoot.Position).Magnitude
+							if dist < closestDist then
+								closest = p
+								closestDist = dist
+							end
+						end
+					end
+				end
+			end
+
+			if closest then
+				KOHandler.StartGrip(player, closest)
+			end
+		end
+	end
+end)
+
+------------------------------------------------------------------------
+-- CLEANUP
+------------------------------------------------------------------------
+
+Players.PlayerRemoving:Connect(function(player)
+	local state = GetKOState(player)
+
+	-- Drop anyone they're carrying
+	if state.CarryingWho then
+		KOHandler.DropCarried(player)
+	end
+
+	-- If they were being carried, update the carrier
+	if state.CarriedBy then
+		local carrierState = GetKOState(state.CarriedBy)
+		carrierState.CarryingWho = nil
+
+		local carrierChar = state.CarriedBy.Character
+		if carrierChar then
+			local hum = carrierChar:FindFirstChildOfClass("Humanoid")
+			if hum then hum.WalkSpeed = 16 end
+		end
+	end
+
+	-- Cancel any grip
+	if state.IsGripping then
+		KOHandler.CancelGrip(player)
+	end
+
+	KOStates[player.UserId] = nil
+end)
+
+print("[KOHandler] System initialized.")
+
+return KOHandler
