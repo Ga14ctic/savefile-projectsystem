@@ -1,0 +1,41 @@
+--[[
+    HideOwnOverhead (LocalScript)
+    Hides the player's own overhead display so they don't see
+    their own name floating above their head.
+    Other players can still see it.
+]]
+
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+local function HideOverhead(character)
+	-- Wait for the head and overhead to exist
+	local head = character:WaitForChild("Head", 10)
+	if not head then return end
+
+	-- The server creates it with a small delay, so we wait
+	local overhead = head:WaitForChild("OverheadGui", 5)
+	if overhead then
+		overhead.Enabled = false
+	end
+
+	-- Also listen in case it gets recreated (rank up, etc.)
+	head.ChildAdded:Connect(function(child)
+		if child.Name == "OverheadGui" and child:IsA("BillboardGui") then
+			child.Enabled = false
+		end
+	end)
+end
+
+-- Run on current character
+if player.Character then
+	HideOverhead(player.Character)
+end
+
+-- Run on every respawn
+player.CharacterAdded:Connect(function(character)
+	task.wait(1) -- wait for overhead to be created by server
+	HideOverhead(character)
+end)
+
+print("[HideOwnOverhead] Running.")
