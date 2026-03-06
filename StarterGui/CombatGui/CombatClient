@@ -1,0 +1,601 @@
+--[[
+    CombatClient (LocalScript)
+    
+    E = equip/unequip weapon
+    Left Click = M1 combo (weapon must be equipped)
+    CTRL + Left Click = Uptilt
+    F (hold) = Block
+    Q = Directional Dodge (moves in WASD direction)
+    R = Crit (ground) / Air Crit (airborne)
+    Z, X, C = Weapon moves
+    V = Carry KO'd player
+    B = Grip/Execute KO'd player
+]]
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+local CombatConfig = require(ReplicatedStorage:WaitForChild("CombatConfig"))
+local WeaponConfig = require(ReplicatedStorage:WaitForChild("WeaponConfig"))
+local Platform = require(ReplicatedStorage:WaitForChild("Platform"))
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+
+local CombatAction = Remotes:WaitForChild("CombatAction")
+local CombatFeedback = Remotes:WaitForChild("CombatFeedback")
+local CombatVFX = Remotes:WaitForChild("CombatVFX")
+
+local screenGui = script.Parent
+local weaponEquipped = false
+local isBlocking = false
+
+------------------------------------------------------------------------
+-- HELPERS
+------------------------------------------------------------------------
+
+local function Create(className, props)
+	local inst = Instance.new(className)
+	for k, v in pairs(props) do inst[k] = v end
+	return inst
+end
+
+local function IsAlive()
+	local char = player.Character
+	if not char then return false end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	return hum and hum.Health > 0
+end
+
+local function IsAirborne()
+	local char = player.Character
+	if not char then return false end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	return hum and hum.FloorMaterial == Enum.Material.Air
+end
+
+local function IsCtrlHeld()
+	return UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+		or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+end
+
+local function GetMoveDirection()
+	local char = player.Character
+	if not char then return Vector3.new(0, 0, -1) end
+
+	local humanoid = char:FindFirstChildOfClass("Humanoid")
+	if humanoid and humanoid.MoveDirection.Magnitude > 0 then
+		return humanoid.MoveDirection.Unit
+	end
+
+	-- If not moving, dodge backward
+	local root = char:FindFirstChild("HumanoidRootPart")
+	if root then
+		return -root.CFrame.LookVector
+	end
+
+	return Vector3.new(0, 0, -1)
+end
+
+------------------------------------------------------------------------
+-- WEAPON EQUIP VISUAL
+------------------------------------------------------------------------
+
+local currentWeaponModel = nil
+
+local function EquipWeaponVisual()
+	local char = player.Character
+	if not char then return end
+
+	local rightArm = char:FindFirstChild("Right Arm")
+	if not rightArm then return end
+
+	local data = player:FindFirstChild("EquippedWeaponDisplay")
+	local weaponId = data and data.Value or "iron_blade"
+
+	if currentWeaponModel then
+		currentWeaponModel:Destroy()
+		currentWeaponModel = nil
+	end
+
+	-- Simple placeholder blade
+	local part = Create("Part", {
+		Name = "WeaponModel",
+		CanCollide = false,
+		Massless = true,
+		Material = Enum.Material.Metal,
+	})
+
+	if weaponId == "iron_blade" then
+		part.Size = Vector3.new(0.2, 0.3, 4)
+		part.Color = Color3.fromRGB(180, 180, 190)
+	elseif weaponId == "twin_fangs" then
+		part.Size = Vector3.new(0.15, 0.2, 2.5)
+		part.Color = Color3.fromRGB(140, 140, 150)
+	elseif weaponId == "warhammer" then
+		part.Size = Vector3.new(0.4, 0.4, 4.5)
+		part.Color = Color3.fromRGB(100, 80, 60)
+	elseif weaponId == "phantom_edge" then
+		part.Size = Vector3.new(0.15, 0.25, 3.8)
+		part.Color = Color3.fromRGB(100, 50, 150)
+		part.Material = Enum.Material.Neon
+		part.Transparency = 0.3
+	elseif weaponId == "ryujin" then
+		part.Size = Vector3.new(0.15, 0.3, 4.2)
+		part.Color = Color3.fromRGB(40, 40, 50)
+	end
+
+	local weld = Instance.new("Weld")
+	weld.Part0 = rightArm
+	weld.Part1 = part
+	weld.C0 = CFrame.new(0, -1, 0) * CFrame.Angles(math.rad(90), 0, 0)
+	weld.Parent = part
+
+	part.Parent = char
+	currentWeaponModel = part
+end
+
+local function UnequipWeaponVisual()
+	if currentWeaponModel then
+		currentWeaponModel:Destroy()
+		currentWeaponModel = nil
+	end
+end
+
+------------------------------------------------------------------------
+-- UI INDICATORS
+------------------------------------------------------------------------
+
+local equipIndicator = Create("TextLabel", {
+	Name = "EquipIndicator",
+	Size = UDim2.new(0, 200, 0, 25),
+	Position = UDim2.new(0.5, -100, 1, -95),
+	BackgroundTransparency = 1,
+	Text = "[E] Equip Weapon",
+	TextColor3 = Color3.fromRGB(150, 150, 160),
+	TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+	TextStrokeTransparency = 0.5,
+	TextSize = 12,
+	Font = Enum.Font.Gotham,
+	Parent = screenGui,
+})
+
+local weaponMoveDisplay = Create("Frame", {
+	Name = "WeaponMoveDisplay",
+	Size = UDim2.new(0, 340, 0, 25),
+	Position = UDim2.new(0.5, -170, 1, -118),
+	BackgroundTransparency = 1,
+	Visible = false,
+	Parent = screenGui,
+})
+
+local moveDisplayLabels = {}
+local moveKeys = {"Z", "X", "C", "R"}
+for i, key in ipairs(moveKeys) do
+	moveDisplayLabels[key] = Create("TextLabel", {
+		Name = "MoveDisplay_" .. key,
+		Size = UDim2.new(0, 80, 1, 0),
+		Position = UDim2.new(0, (i - 1) * 85, 0, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = Color3.fromRGB(200, 200, 210),
+		TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+		TextStrokeTransparency = 0.5,
+		TextSize = 11,
+		Font = Enum.Font.GothamBold,
+		Parent = weaponMoveDisplay,
+	})
+end
+
+local function UpdateUI()
+	if weaponEquipped then
+		equipIndicator.Text = "[E] Unequip"
+		equipIndicator.TextColor3 = Color3.fromRGB(100, 200, 100)
+
+		local data = player:FindFirstChild("EquippedWeaponDisplay")
+		local weaponId = data and data.Value or "iron_blade"
+		local weapon = WeaponConfig.GetWeaponById(weaponId)
+
+		if weapon then
+			weaponMoveDisplay.Visible = true
+			if weapon.Z then moveDisplayLabels["Z"].Text = "[Z] " .. weapon.Z.Name end
+			if weapon.X then moveDisplayLabels["X"].Text = "[X] " .. weapon.X.Name end
+			if weapon.C then moveDisplayLabels["C"].Text = "[C] " .. weapon.C.Name end
+			if weapon.Crit then moveDisplayLabels["R"].Text = "[R] " .. weapon.Crit.Name end
+		end
+	else
+		equipIndicator.Text = "[E] Equip Weapon"
+		equipIndicator.TextColor3 = Color3.fromRGB(150, 150, 160)
+		weaponMoveDisplay.Visible = false
+	end
+end
+
+------------------------------------------------------------------------
+-- INPUT
+------------------------------------------------------------------------
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if not IsAlive() then return end
+
+	-- EQUIP (E)
+	if input.KeyCode == Enum.KeyCode.E then
+		weaponEquipped = not weaponEquipped
+		if weaponEquipped then
+			EquipWeaponVisual()
+		else
+			UnequipWeaponVisual()
+		end
+		UpdateUI()
+		CombatAction:FireServer("Equip", {Equipped = weaponEquipped})
+		return
+	end
+
+	-- KO actions (work without weapon)
+	if input.KeyCode == Enum.KeyCode.V then
+		local KOAction = Remotes:FindFirstChild("KOAction")
+		if KOAction then KOAction:FireServer("Carry") end
+		return
+	end
+
+	if input.KeyCode == Enum.KeyCode.B then
+		local KOAction = Remotes:FindFirstChild("KOAction")
+		if KOAction then KOAction:FireServer("Grip") end
+		return
+	end
+
+	-- Everything below requires weapon
+	if not weaponEquipped then return end
+
+	-- M1 / UPTILT
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		if IsCtrlHeld() then
+			CombatAction:FireServer("Uptilt")
+		else
+			CombatAction:FireServer("M1")
+		end
+
+		-- BLOCK (F)
+	elseif input.KeyCode == Enum.KeyCode.F then
+		isBlocking = true
+		CombatAction:FireServer("BlockStart")
+
+		-- DODGE (Q) — directional
+	elseif input.KeyCode == Enum.KeyCode.Q then
+		local dir = GetMoveDirection()
+		CombatAction:FireServer("Dodge", {Direction = dir})
+
+		-- CRIT / AIR CRIT (R)
+	elseif input.KeyCode == Enum.KeyCode.R then
+		CombatAction:FireServer("Move", {Key = "R", Airborne = IsAirborne()})
+
+		-- WEAPON MOVES
+	elseif input.KeyCode == Enum.KeyCode.Z then
+		CombatAction:FireServer("Move", {Key = "Z"})
+
+	elseif input.KeyCode == Enum.KeyCode.X then
+		CombatAction:FireServer("Move", {Key = "X"})
+
+	elseif input.KeyCode == Enum.KeyCode.C then
+		CombatAction:FireServer("Move", {Key = "C"})
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input, gameProcessed)
+	if input.KeyCode == Enum.KeyCode.F then
+		isBlocking = false
+		CombatAction:FireServer("BlockEnd")
+	end
+end)
+
+------------------------------------------------------------------------
+-- COMBAT FEEDBACK
+------------------------------------------------------------------------
+
+CombatFeedback.OnClientEvent:Connect(function(feedbackType, ...)
+	local args = {...}
+
+	if feedbackType == "M1Hit" then
+		local combo = args[1]
+		local didHit = args[2]
+		print("[Combat] M1 #" .. combo .. (didHit and " - HIT!" or " - whiff"))
+
+	elseif feedbackType == "Hit" then
+		print("[Combat] Hit for " .. (args[2] or 0) .. " damage!")
+
+	elseif feedbackType == "Blocked" then
+		print("[Combat] Blocked! Chip: " .. (args[2] or 0))
+
+	elseif feedbackType == "Parried" then
+		print("[Combat] PARRIED!")
+
+	elseif feedbackType == "ParrySuccess" then
+		print("[Combat] PARRY SUCCESS!")
+
+	elseif feedbackType == "Dodge" then
+		print("[Combat] Dodged!")
+
+	elseif feedbackType == "MoveHit" then
+		print("[Combat] " .. (args[1] or "Move") .. " hit " .. (args[2] or 0) .. " targets!")
+
+	elseif feedbackType == "AirCrit" then
+		print("[Combat] AIR CRIT!")
+
+	elseif feedbackType == "Uptilt" then
+		print("[Combat] Uptilt" .. (args[1] and " - LAUNCH!" or " - whiff"))
+
+	elseif feedbackType == "OnCooldown" then
+		print("[Combat] " .. (args[1] or "Move") .. " on CD: " .. string.format("%.1f", args[2] or 0) .. "s")
+	end
+end)
+
+------------------------------------------------------------------------
+-- VFX
+------------------------------------------------------------------------
+
+CombatVFX.OnClientEvent:Connect(function(vfxType, position, direction)
+	if not position then return end
+
+	local part = Create("Part", {
+		Size = Vector3.new(2, 2, 2),
+		Position = position,
+		Anchored = true,
+		CanCollide = false,
+		Transparency = 0.3,
+		Material = Enum.Material.Neon,
+		Shape = Enum.PartType.Ball,
+		Parent = workspace,
+	})
+
+	if vfxType == "Hit" then
+		part.Color = Color3.fromRGB(255, 50, 50)
+		part.Size = Vector3.new(2, 2, 2)
+	elseif vfxType == "Block" then
+		part.Color = Color3.fromRGB(100, 150, 255)
+		part.Size = Vector3.new(2.5, 2.5, 2.5)
+	elseif vfxType == "Parry" then
+		part.Color = Color3.fromRGB(255, 255, 100)
+		part.Size = Vector3.new(3.5, 3.5, 3.5)
+	elseif vfxType == "AirCrit" then
+		part.Color = Color3.fromRGB(255, 200, 50)
+		part.Size = Vector3.new(6, 1.5, 6)
+	elseif vfxType == "Dodge" then
+		part.Color = Color3.fromRGB(150, 220, 255)
+		part.Size = Vector3.new(1.5, 1.5, 1.5)
+		part.Transparency = 0.5
+	elseif vfxType == "Uptilt" then
+		part.Color = Color3.fromRGB(200, 255, 100)
+		part.Size = Vector3.new(2, 3, 2)
+	else
+		part.Color = Color3.fromRGB(255, 255, 255)
+	end
+
+	task.spawn(function()
+		for i = 1, 10 do
+			task.wait(0.03)
+			part.Transparency = 0.3 + (i * 0.07)
+			part.Size = part.Size * 1.05
+		end
+		part:Destroy()
+	end)
+end)
+
+------------------------------------------------------------------------
+-- KO FEEDBACK
+------------------------------------------------------------------------
+
+task.spawn(function()
+	local KOFeedback = Remotes:WaitForChild("KOFeedback", 10)
+	if not KOFeedback then return end
+
+	-- KO indicator on heads
+	local function CreateKOIndicator(character)
+		if not character then return end
+		local head = character:FindFirstChild("Head")
+		if not head or head:FindFirstChild("KOIndicator") then return end
+
+		local bb = Create("BillboardGui", {
+			Name = "KOIndicator",
+			Size = UDim2.new(0, 100, 0, 30),
+			StudsOffset = Vector3.new(0, 4, 0),
+			AlwaysOnTop = true,
+			MaxDistance = 40,
+			Parent = head,
+		})
+
+		Create("TextLabel", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Text = "KNOCKED OUT",
+			TextColor3 = Color3.fromRGB(255, 60, 60),
+			TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+			TextStrokeTransparency = 0.3,
+			TextSize = 14,
+			Font = Enum.Font.GothamBold,
+			Parent = bb,
+		})
+	end
+
+	local function RemoveKOIndicator(character)
+		if not character then return end
+		local head = character:FindFirstChild("Head")
+		if head then
+			local ind = head:FindFirstChild("KOIndicator")
+			if ind then ind:Destroy() end
+		end
+	end
+
+	-- Grip progress bar
+	local gripBar = Create("Frame", {
+		Name = "GripBar",
+		Size = UDim2.new(0, 200, 0, 8),
+		Position = UDim2.new(0.5, -100, 0.6, 0),
+		BackgroundColor3 = Color3.fromRGB(30, 30, 30),
+		Visible = false,
+		Parent = screenGui,
+	})
+	Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = gripBar})
+
+	local gripFill = Create("Frame", {
+		Size = UDim2.new(0, 0, 1, 0),
+		BackgroundColor3 = Color3.fromRGB(255, 60, 60),
+		Parent = gripBar,
+	})
+	Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = gripFill})
+
+	Create("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 20),
+		Position = UDim2.new(0, 0, 0, -22),
+		BackgroundTransparency = 1,
+		Text = "EXECUTING...",
+		TextColor3 = Color3.fromRGB(255, 60, 60),
+		TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+		TextStrokeTransparency = 0.3,
+		TextSize = 14,
+		Font = Enum.Font.GothamBold,
+		Parent = gripBar,
+	})
+
+	local gripAnimActive = false
+
+	KOFeedback.OnClientEvent:Connect(function(feedbackType, ...)
+		local args = {...}
+
+		if feedbackType == "PlayerKO" then
+			local koChar = args[2]
+			CreateKOIndicator(koChar)
+
+		elseif feedbackType == "PlayerRevive" then
+			local p = args[1]
+			if p and p.Character then RemoveKOIndicator(p.Character) end
+
+		elseif feedbackType == "GripStart" then
+			local gripper = args[1]
+			if gripper == player then
+				gripBar.Visible = true
+				gripAnimActive = true
+				task.spawn(function()
+					local start = os.clock()
+					while gripAnimActive do
+						local progress = math.min((os.clock() - start) / 2.0, 1)
+						gripFill.Size = UDim2.new(progress, 0, 1, 0)
+						if progress >= 1 then break end
+						task.wait(0.03)
+					end
+					gripBar.Visible = false
+				end)
+			end
+
+		elseif feedbackType == "GripCancel" then
+			if args[1] == player then
+				gripAnimActive = false
+				gripBar.Visible = false
+			end
+
+		elseif feedbackType == "PlayerGripped" then
+			gripAnimActive = false
+			gripBar.Visible = false
+			local victim = args[2]
+			if victim and victim.Character then RemoveKOIndicator(victim.Character) end
+
+		elseif feedbackType == "PlayerTimedOut" then
+			local victim = args[1]
+			if victim and victim.Character then RemoveKOIndicator(victim.Character) end
+		end
+	end)
+end)
+
+------------------------------------------------------------------------
+-- RESET ON DEATH
+------------------------------------------------------------------------
+
+player.CharacterAdded:Connect(function(char)
+	weaponEquipped = false
+	currentWeaponModel = nil
+	UpdateUI()
+
+	local hum = char:WaitForChild("Humanoid", 10)
+	if hum then
+		hum.Died:Connect(function()
+			weaponEquipped = false
+			currentWeaponModel = nil
+			UpdateUI()
+		end)
+	end
+end)
+
+------------------------------------------------------------------------
+-- MOBILE BUTTONS
+------------------------------------------------------------------------
+
+if Platform.IsMobile() then
+	local cb = Create("Frame", {
+		Name = "CombatButtons",
+		Size = UDim2.new(0, 200, 0, 200),
+		Position = UDim2.new(1, -210, 1, -260),
+		BackgroundTransparency = 1,
+		Parent = screenGui,
+	})
+
+	local function MobileBtn(text, pos, color, callback)
+		local btn = Create("TextButton", {
+			Size = UDim2.new(0, 55, 0, 55),
+			Position = pos,
+			BackgroundColor3 = color,
+			BackgroundTransparency = 0.3,
+			Text = text,
+			TextColor3 = Color3.fromRGB(255, 255, 255),
+			TextSize = 14,
+			Font = Enum.Font.GothamBold,
+			Parent = cb,
+		})
+		Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = btn})
+		btn.MouseButton1Click:Connect(callback)
+		return btn
+	end
+
+	MobileBtn("ATK", UDim2.new(0, 140, 0, 70), Color3.fromRGB(200, 60, 60), function()
+		if weaponEquipped and IsAlive() then CombatAction:FireServer("M1") end
+	end)
+
+	MobileBtn("BLK", UDim2.new(0, 70, 0, 70), Color3.fromRGB(60, 100, 200), function()
+		-- Toggle block on mobile
+		if not weaponEquipped or not IsAlive() then return end
+		isBlocking = not isBlocking
+		CombatAction:FireServer(isBlocking and "BlockStart" or "BlockEnd")
+	end)
+
+	MobileBtn("DGE", UDim2.new(0, 0, 0, 70), Color3.fromRGB(60, 200, 100), function()
+		if weaponEquipped and IsAlive() then
+			CombatAction:FireServer("Dodge", {Direction = GetMoveDirection()})
+		end
+	end)
+
+	MobileBtn("EQP", UDim2.new(0, 70, 0, 145), Color3.fromRGB(100, 100, 100), function()
+		if not IsAlive() then return end
+		weaponEquipped = not weaponEquipped
+		if weaponEquipped then EquipWeaponVisual() else UnequipWeaponVisual() end
+		UpdateUI()
+		CombatAction:FireServer("Equip", {Equipped = weaponEquipped})
+	end)
+
+	local mobileKeys = {
+		{T = "Z", P = UDim2.new(0, 0, 0, 10), C = Color3.fromRGB(180, 120, 40)},
+		{T = "X", P = UDim2.new(0, 70, 0, 0), C = Color3.fromRGB(180, 40, 120)},
+		{T = "C", P = UDim2.new(0, 140, 0, 10), C = Color3.fromRGB(40, 140, 180)},
+		{T = "R", P = UDim2.new(0, 70, 0, 145), C = Color3.fromRGB(255, 200, 40)},
+	}
+
+	for _, mk in ipairs(mobileKeys) do
+		MobileBtn(mk.T, mk.P, mk.C, function()
+			if not weaponEquipped or not IsAlive() then return end
+			if mk.T == "R" then
+				CombatAction:FireServer("Move", {Key = "R", Airborne = IsAirborne()})
+			else
+				CombatAction:FireServer("Move", {Key = mk.T})
+			end
+		end)
+	end
+end
+
+print("[CombatClient] System initialized.")
