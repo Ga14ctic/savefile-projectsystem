@@ -1,0 +1,113 @@
+--[[
+    UIScalerClient (LocalScript)
+    Scales UI elements on mobile so they're not too big or too small.
+    Adds UIScale to key ScreenGuis based on screen size.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Platform = require(ReplicatedStorage:WaitForChild("Platform"))
+
+if not Platform.IsMobile() then
+	-- PC doesn't need scaling
+	return
+end
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- Wait for GUIs to load
+task.wait(1)
+
+------------------------------------------------------------------------
+-- SCALE SETTINGS PER GUI
+------------------------------------------------------------------------
+
+local function GetScaleFactor()
+	local screenSize = workspace.CurrentCamera.ViewportSize
+	local width = screenSize.X
+
+	-- Base design width is 1920 (PC)
+	-- Scale down for mobile
+	if width < 500 then
+		return 0.55  -- Very small phone
+	elseif width < 750 then
+		return 0.65  -- Normal phone
+	elseif width < 1100 then
+		return 0.8   -- Tablet
+	else
+		return 0.9   -- Large tablet / landscape
+	end
+end
+
+local scaleFactor = GetScaleFactor()
+
+------------------------------------------------------------------------
+-- APPLY SCALING
+------------------------------------------------------------------------
+
+local guisToScale = {
+	"MenuGui",
+	"CharacterCreationGui",
+	"CustomLeaderboard",
+	"AdminGui",
+}
+
+for _, guiName in ipairs(guisToScale) do
+	local gui = playerGui:FindFirstChild(guiName)
+	if gui then
+		-- Check if UIScale already exists
+		local existing = gui:FindFirstChildOfClass("UIScale")
+		if not existing then
+			local scale = Instance.new("UIScale")
+			scale.Scale = scaleFactor
+			scale.Parent = gui
+		end
+	end
+end
+
+------------------------------------------------------------------------
+-- REPOSITION MOBILE-SPECIFIC ELEMENTS
+------------------------------------------------------------------------
+
+-- Move the skill tree panel to fill more of the screen on mobile
+local menuGui = playerGui:FindFirstChild("MenuGui")
+if menuGui then
+	local menuClient = menuGui:FindFirstChildOfClass("LocalScript")
+
+	-- The skill panel needs to be found in the GUI hierarchy
+	task.spawn(function()
+		task.wait(2)
+		local skillPanel = menuGui:FindFirstChild("SkillTreePanel")
+		if skillPanel then
+			-- Make it wider on mobile to fill the screen
+			skillPanel.Size = UDim2.new(0.95, 0, 0.7, 0)
+			skillPanel.Position = UDim2.new(0.025, 0, 0.08, 0)
+		end
+
+		local menuFrame = menuGui:FindFirstChild("MenuFrame")
+		if menuFrame then
+			-- Center the menu on mobile
+			menuFrame.Size = UDim2.new(0, 200, 0, 0)
+			menuFrame.Position = UDim2.new(0.5, -100, 0.4, 0)
+		end
+	end)
+end
+
+-- Adjust character creation for mobile
+local charGui = playerGui:FindFirstChild("CharacterCreationGui")
+if charGui then
+	task.spawn(function()
+		task.wait(1)
+		-- Find the container
+		for _, desc in ipairs(charGui:GetDescendants()) do
+			if desc.Name == "Container" and desc:IsA("Frame") then
+				desc.Size = UDim2.new(0.9, 0, 0, 520)
+				desc.Position = UDim2.new(0.05, 0, 0.5, -240)
+			end
+		end
+	end)
+end
+
+print("[UIScaler] Applied mobile scaling: " .. scaleFactor)
