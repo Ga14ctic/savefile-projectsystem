@@ -1,0 +1,108 @@
+--[[
+    CombatConfig
+    Global combat settings that apply to ALL players regardless of weapon.
+    Controls the feel and pacing of combat.
+]]
+
+local CombatConfig = {}
+
+------------------------------------------------------------------------
+-- PLAYER STATES
+------------------------------------------------------------------------
+
+-- A player can only be in ONE state at a time
+CombatConfig.States = {
+	Idle = "Idle",
+	Attacking = "Attacking",       -- Mid-swing
+	Blocking = "Blocking",         -- Holding block
+	Stunned = "Stunned",           -- Hit stun or parry stun
+	Dodging = "Dodging",           -- Mid-dodge, has i-frames
+	UsingMove = "UsingMove",       -- Z/X/C/R move in progress
+	Parrying = "Parrying",         -- In the parry window
+	Downed = "Downed",             -- On the ground after being launched
+}
+
+------------------------------------------------------------------------
+-- STATE PRIORITIES (higher number = can't be interrupted by lower)
+------------------------------------------------------------------------
+
+CombatConfig.StatePriority = {
+	Idle = 0,
+	Attacking = 1,
+	Blocking = 1,
+	Parrying = 2,
+	Dodging = 3,         -- Dodge beats everything except being downed
+	UsingMove = 2,
+	Stunned = 4,         -- Can't do anything while stunned
+	Downed = 5,
+}
+
+------------------------------------------------------------------------
+-- KEYBINDS
+------------------------------------------------------------------------
+
+CombatConfig.Keybinds = {
+	M1 = Enum.UserInputType.MouseButton1,   -- Left click
+	Block = Enum.KeyCode.F,                  -- Hold F to block
+	Dodge = Enum.KeyCode.Q,                  -- Q to dodge
+	CritGround = Enum.KeyCode.R,             -- R for crit (ground)
+	CritAir = Enum.KeyCode.R,                -- R in air = air crit
+	Equip = Enum.KeyCode.E,                  -- E to equip/unequip weapon
+	MoveZ = Enum.KeyCode.Z,
+	MoveX = Enum.KeyCode.X,
+	MoveC = Enum.KeyCode.C,
+	-- Uptilt = CTRL + M1 (handled in code, not a single keybind)
+}
+
+------------------------------------------------------------------------
+-- ANIMATION PRIORITIES
+------------------------------------------------------------------------
+
+CombatConfig.AnimationPriority = {
+	M1 = Enum.AnimationPriority.Action,
+	Block = Enum.AnimationPriority.Action,
+	Dodge = Enum.AnimationPriority.Action2,
+	Move = Enum.AnimationPriority.Action3,
+	Crit = Enum.AnimationPriority.Action4,
+	Stun = Enum.AnimationPriority.Action4,
+}
+
+------------------------------------------------------------------------
+-- VFX SETTINGS
+------------------------------------------------------------------------
+
+CombatConfig.VFX = {
+	HitEffectDuration = 0.3,
+	SlashTrailDuration = 0.2,
+	BlockEffectDuration = 0.2,
+	ParryEffectDuration = 0.4,
+	ParryFlashColor = Color3.fromRGB(255, 255, 100),  -- Yellow flash on parry
+	HitFlashColor = Color3.fromRGB(255, 50, 50),       -- Red flash on hit
+	BlockFlashColor = Color3.fromRGB(100, 150, 255),    -- Blue flash on block
+}
+
+------------------------------------------------------------------------
+-- KNOCKBACK
+------------------------------------------------------------------------
+
+CombatConfig.Knockback = {
+	M1 = 4,            -- Small pushback on M1 hit
+	Move = 8,           -- Medium pushback on move hit
+	Crit = 12,          -- Large pushback on crit
+	GuardBreak = 6,     -- Pushback when guard is broken
+	Parry = 10,         -- Attacker pushed back on parry
+}
+
+------------------------------------------------------------------------
+-- DAMAGE SCALING (applies on top of base weapon damage)
+------------------------------------------------------------------------
+
+-- Strength tree bonus: +0.5% M1 damage per point
+-- Mastery tree bonus: +0.5% ability damage per point
+-- These are small — a player with 40 Strength points gets +20% M1 damage
+-- That turns a 5 damage hit into 6 damage. Meaningful but not broken.
+
+CombatConfig.StrengthM1Bonus = 0.005   -- 0.5% per point
+CombatConfig.MasteryAbilityBonus = 0.005 -- 0.5% per point
+
+return CombatConfig
