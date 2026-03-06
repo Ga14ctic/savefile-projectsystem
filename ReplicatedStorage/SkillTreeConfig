@@ -1,0 +1,208 @@
+--[[
+    SkillTreeConfig
+    Defines the 3 skill trees, their moves, and point requirements.
+    
+    Each move has:
+    - Name: display name
+    - Description: what it does (flavor text for now)
+    - PointsRequired: how many points in THIS tree to unlock it
+    - Cooldown: seconds before you can use it again
+    - Key: which key slot it can be assigned to
+]]
+
+local SkillTreeConfig = {}
+
+------------------------------------------------------------------------
+-- SKILL TREES
+------------------------------------------------------------------------
+
+SkillTreeConfig.Trees = {
+	{
+		Name = "Strength",
+		Description = "Raw power. Hit harder, take more.",
+		Color = Color3.fromRGB(220, 60, 60),       -- Red
+		Icon = "💪",
+
+		-- Passive bonuses per point spent
+		BonusPerPoint = {
+			M1DamageBoost = 0.5,   -- +0.5% M1 damage per point
+		},
+
+		-- Moves unlocked at point thresholds
+		Moves = {
+			{
+				Name = "Heavy Blow",
+				Description = "A powerful overhead strike that staggers the target.",
+				PointsRequired = 5,
+				Cooldown = 8,
+				Damage = 25,
+				SlotType = "SkillTree",
+			},
+			{
+				Name = "Ground Slam",
+				Description = "Slam the ground, sending a shockwave in front of you.",
+				PointsRequired = 15,
+				Cooldown = 14,
+				Damage = 35,
+				SlotType = "SkillTree",
+			},
+			{
+				Name = "Iron Grip",
+				Description = "Grab the enemy and crush them. Unblockable.",
+				PointsRequired = 25,
+				Cooldown = 20,
+				Damage = 45,
+				SlotType = "SkillTree",
+			},
+			{
+				Name = "Titan Crash",
+				Description = "Leap into the air and come crashing down with devastating force.",
+				PointsRequired = 40,
+				Cooldown = 30,
+				Damage = 70,
+				SlotType = "SkillTree",
+			},
+		},
+	},
+
+	{
+		Name = "Dexterity",
+		Description = "Speed and precision. Outplay everyone.",
+		Color = Color3.fromRGB(60, 200, 100),       -- Green
+		Icon = "⚡",
+
+		BonusPerPoint = {
+			SpeedBoost = 0.3,      -- +0.3% movement speed per point
+		},
+
+		Moves = {
+			{
+				Name = "Flash Step",
+				Description = "Instantly dash a short distance. Brief i-frames.",
+				PointsRequired = 5,
+				Cooldown = 6,
+				Damage = 0,
+				SlotType = "SkillTree",
+			},
+			{
+				Name = "Blade Flurry",
+				Description = "A rapid 6-hit combo that locks the target in place.",
+				PointsRequired = 15,
+				Cooldown = 12,
+				Damage = 30,
+				SlotType = "SkillTree",
+			},
+			{
+				Name = "Counter Stance",
+				Description = "Enter a counter stance. If hit, teleport behind the attacker and strike.",
+				PointsRequired = 25,
+				Cooldown = 18,
+				Damage = 40,
+				SlotType = "SkillTree",
+			},
+			{
+				Name = "Phantom Rush",
+				Description = "Become a blur. Dash through the enemy multiple times, slashing each pass.",
+				PointsRequired = 40,
+				Cooldown = 28,
+				Damage = 60,
+				SlotType = "SkillTree",
+			},
+		},
+	},
+
+	{
+		Name = "Mastery",
+		Description = "Control and technique. Dominate the fight.",
+		Color = Color3.fromRGB(100, 80, 255),        -- Purple
+		Icon = "🔮",
+
+		BonusPerPoint = {
+			AbilityDamageBoost = 0.5,  -- +0.5% ability damage per point
+		},
+
+		Moves = {
+			{
+				Name = "Mana Burst",
+				Description = "Release a burst of energy that knocks enemies back.",
+				PointsRequired = 5,
+				Cooldown = 10,
+				Damage = 20,
+				SlotType = "SkillTree",
+			},
+			{
+				Name = "Bind",
+				Description = "Root the target in place for 2 seconds. They can still attack.",
+				PointsRequired = 15,
+				Cooldown = 16,
+				Damage = 10,
+				SlotType = "SkillTree",
+			},
+			{
+				Name = "Domain Pulse",
+				Description = "Create a zone around you. Enemies inside take damage over time.",
+				PointsRequired = 25,
+				Cooldown = 22,
+				Damage = 50,
+				SlotType = "SkillTree",
+			},
+			{
+				Name = "Absolute Command",
+				Description = "Freeze all enemies in a radius for 3 seconds. Massive cooldown.",
+				PointsRequired = 40,
+				Cooldown = 45,
+				Damage = 30,
+				SlotType = "SkillTree",
+			},
+		},
+	},
+}
+
+------------------------------------------------------------------------
+-- POINTS AWARDED PER RANK UP
+------------------------------------------------------------------------
+
+SkillTreeConfig.PointsPerRank = {
+	E = 0,     -- Starting rank, no points yet
+	D = 5,     -- Rank up to D = 5 points
+	C = 5,     -- Rank up to C = 5 more points
+	B = 8,     -- Rank up to B = 8 more points
+	A = 10,    -- Rank up to A = 10 more points
+	S = 12,    -- Rank up to S = 12 more points
+	-- Total possible at S rank: 5+5+8+10+12 = 40 points
+	-- This means S rank can JUST unlock the final move in ONE tree
+	-- or spread points across multiple trees
+}
+
+-- Max points you can put into a single tree
+SkillTreeConfig.MaxPointsPerTree = 50
+
+------------------------------------------------------------------------
+-- KEYBINDS FOR SKILL TREE MOVES
+------------------------------------------------------------------------
+
+-- Players equip unlocked moves into these 4 slots
+SkillTreeConfig.SkillSlots = {
+	{Key = "One",   Display = "1"},
+	{Key = "Two",   Display = "2"},
+	{Key = "Three", Display = "3"},
+	{Key = "Four",  Display = "4"},
+}
+
+-- Weapon slots (defined here for reference, weapons come later)
+SkillTreeConfig.WeaponSlots = {
+	{Key = "Z", Display = "Z"},
+	{Key = "X", Display = "X"},
+	{Key = "C", Display = "C"},
+}
+
+-- Awakening slots (defined here for reference, awakening comes later)
+SkillTreeConfig.AwakeningSlots = {
+	{Key = "G", Display = "G"},
+	{Key = "T", Display = "T"},
+}
+
+-- Crit key
+SkillTreeConfig.CritKey = "R"
+
+return SkillTreeConfig
