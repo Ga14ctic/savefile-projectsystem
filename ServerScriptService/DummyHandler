@@ -1,0 +1,307 @@
+--[[
+    DummyHandler (ModuleScript)
+    Creates test dummies for combat testing.
+    
+    Admin command: dummy [action]
+    - dummy spawn     → spawns a dummy near you
+    - dummy remove    → removes all dummies
+    - dummy reset     → resets all dummy HP
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+
+local DummyHandler = {}
+
+local activeDummies = {}
+local DUMMY_MAX_HP = 100
+
+------------------------------------------------------------------------
+-- CREATE DUMMY CHARACTER
+------------------------------------------------------------------------
+
+local function CreateDummy(position)
+	-- Create the model
+	local dummy = Instance.new("Model")
+	dummy.Name = "CombatDummy"
+
+	-- Torso (center piece)
+	local torso = Instance.new("Part")
+	torso.Name = "Torso"
+	torso.Size = Vector3.new(2, 2, 1)
+	torso.CFrame = CFrame.new(position)
+	torso.Anchored = false
+	torso.CanCollide = true
+	torso.BrickColor = BrickColor.new("Bright red")
+	torso.Material = Enum.Material.SmoothPlastic
+	torso.Parent = dummy
+
+	-- Head
+	local head = Instance.new("Part")
+	head.Name = "Head"
+	head.Size = Vector3.new(2, 1, 1)
+	head.BrickColor = BrickColor.new("Pastel brown")
+	head.Material = Enum.Material.SmoothPlastic
+	head.CanCollide = true
+	head.Parent = dummy
+
+	local headMesh = Instance.new("SpecialMesh")
+	headMesh.MeshType = Enum.MeshType.Head
+	headMesh.Scale = Vector3.new(1.25, 1.25, 1.25)
+	headMesh.Parent = head
+
+	-- HumanoidRootPart
+	local hrp = Instance.new("Part")
+	hrp.Name = "HumanoidRootPart"
+	hrp.Size = Vector3.new(2, 2, 1)
+	hrp.Transparency = 1
+	hrp.CanCollide = false
+	hrp.CFrame = CFrame.new(position)
+	hrp.Parent = dummy
+
+	-- Left Arm
+	local leftArm = Instance.new("Part")
+	leftArm.Name = "Left Arm"
+	leftArm.Size = Vector3.new(1, 2, 1)
+	leftArm.BrickColor = BrickColor.new("Pastel brown")
+	leftArm.Material = Enum.Material.SmoothPlastic
+	leftArm.CanCollide = false
+	leftArm.Parent = dummy
+
+	-- Right Arm
+	local rightArm = Instance.new("Part")
+	rightArm.Name = "Right Arm"
+	rightArm.Size = Vector3.new(1, 2, 1)
+	rightArm.BrickColor = BrickColor.new("Pastel brown")
+	rightArm.Material = Enum.Material.SmoothPlastic
+	rightArm.CanCollide = false
+	rightArm.Parent = dummy
+
+	-- Left Leg
+	local leftLeg = Instance.new("Part")
+	leftLeg.Name = "Left Leg"
+	leftLeg.Size = Vector3.new(1, 2, 1)
+	leftLeg.BrickColor = BrickColor.new("Dark stone grey")
+	leftLeg.Material = Enum.Material.SmoothPlastic
+	leftLeg.CanCollide = false
+	leftLeg.Parent = dummy
+
+	-- Right Leg
+	local rightLeg = Instance.new("Part")
+	rightLeg.Name = "Right Leg"
+	rightLeg.Size = Vector3.new(1, 2, 1)
+	rightLeg.BrickColor = BrickColor.new("Dark stone grey")
+	rightLeg.Material = Enum.Material.SmoothPlastic
+	rightLeg.CanCollide = false
+	rightLeg.Parent = dummy
+
+	-- Humanoid
+	local humanoid = Instance.new("Humanoid")
+	humanoid.MaxHealth = DUMMY_MAX_HP
+	humanoid.Health = DUMMY_MAX_HP
+	humanoid.WalkSpeed = 0
+	humanoid.JumpPower = 0
+	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	humanoid.Parent = dummy
+
+	-- Set PrimaryPart
+	dummy.PrimaryPart = hrp
+
+	-- Build the joints (Motor6D welds like R6)
+	-- Root Joint
+	local rootJoint = Instance.new("Motor6D")
+	rootJoint.Name = "RootJoint"
+	rootJoint.Part0 = hrp
+	rootJoint.Part1 = torso
+	rootJoint.C0 = CFrame.new(0, 0, 0)
+	rootJoint.Parent = hrp
+
+	-- Neck
+	local neck = Instance.new("Motor6D")
+	neck.Name = "Neck"
+	neck.Part0 = torso
+	neck.Part1 = head
+	neck.C0 = CFrame.new(0, 1, 0)
+	neck.C1 = CFrame.new(0, -0.5, 0)
+	neck.Parent = torso
+
+	-- Left Shoulder
+	local leftShoulder = Instance.new("Motor6D")
+	leftShoulder.Name = "Left Shoulder"
+	leftShoulder.Part0 = torso
+	leftShoulder.Part1 = leftArm
+	leftShoulder.C0 = CFrame.new(-1, 0.5, 0)
+	leftShoulder.C1 = CFrame.new(0.5, 0.5, 0)
+	leftShoulder.Parent = torso
+
+	-- Right Shoulder
+	local rightShoulder = Instance.new("Motor6D")
+	rightShoulder.Name = "Right Shoulder"
+	rightShoulder.Part0 = torso
+	rightShoulder.Part1 = rightArm
+	rightShoulder.C0 = CFrame.new(1, 0.5, 0)
+	rightShoulder.C1 = CFrame.new(-0.5, 0.5, 0)
+	rightShoulder.Parent = torso
+
+	-- Left Hip
+	local leftHip = Instance.new("Motor6D")
+	leftHip.Name = "Left Hip"
+	leftHip.Part0 = torso
+	leftHip.Part1 = leftLeg
+	leftHip.C0 = CFrame.new(-0.5, -1, 0)
+	leftHip.C1 = CFrame.new(0, 1, 0)
+	leftHip.Parent = torso
+
+	-- Right Hip
+	local rightHip = Instance.new("Motor6D")
+	rightHip.Name = "Right Hip"
+	rightHip.Part0 = torso
+	rightHip.Part1 = rightLeg
+	rightHip.C0 = CFrame.new(0.5, -1, 0)
+	rightHip.C1 = CFrame.new(0, 1, 0)
+	rightHip.Parent = torso
+
+	-- Overhead display
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "DummyLabel"
+	billboard.Size = UDim2.new(0, 120, 0, 50)
+	billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+	billboard.AlwaysOnTop = false
+	billboard.MaxDistance = 40
+	billboard.Parent = head
+
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Size = UDim2.new(1, 0, 0, 20)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Text = "Combat Dummy"
+	nameLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+	nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	nameLabel.TextStrokeTransparency = 0.3
+	nameLabel.TextSize = 14
+	nameLabel.Font = Enum.Font.GothamBold
+	nameLabel.Parent = billboard
+
+	local hpLabel = Instance.new("TextLabel")
+	hpLabel.Name = "HPLabel"
+	hpLabel.Size = UDim2.new(1, 0, 0, 16)
+	hpLabel.Position = UDim2.new(0, 0, 0, 20)
+	hpLabel.BackgroundTransparency = 1
+	hpLabel.Text = DUMMY_MAX_HP .. "/" .. DUMMY_MAX_HP .. " HP"
+	hpLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+	hpLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	hpLabel.TextStrokeTransparency = 0.3
+	hpLabel.TextSize = 12
+	hpLabel.Font = Enum.Font.Gotham
+	hpLabel.Parent = billboard
+
+	-- HP bar background
+	local hpBarBg = Instance.new("Frame")
+	hpBarBg.Name = "HPBarBg"
+	hpBarBg.Size = UDim2.new(1, -10, 0, 4)
+	hpBarBg.Position = UDim2.new(0, 5, 0, 38)
+	hpBarBg.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	hpBarBg.BorderSizePixel = 0
+	hpBarBg.Parent = billboard
+	Instance.new("UICorner", hpBarBg).CornerRadius = UDim.new(0, 2)
+
+	local hpBarFill = Instance.new("Frame")
+	hpBarFill.Name = "HPBarFill"
+	hpBarFill.Size = UDim2.new(1, 0, 1, 0)
+	hpBarFill.BackgroundColor3 = Color3.fromRGB(80, 220, 80)
+	hpBarFill.BorderSizePixel = 0
+	hpBarFill.Parent = hpBarBg
+	Instance.new("UICorner", hpBarFill).CornerRadius = UDim.new(0, 2)
+
+	-- Listen for health changes
+	humanoid.HealthChanged:Connect(function(newHealth)
+		hpLabel.Text = math.floor(newHealth) .. "/" .. DUMMY_MAX_HP .. " HP"
+
+		local ratio = newHealth / DUMMY_MAX_HP
+		hpBarFill.Size = UDim2.new(math.max(ratio, 0), 0, 1, 0)
+
+		-- Color based on health
+		if ratio > 0.5 then
+			hpBarFill.BackgroundColor3 = Color3.fromRGB(80, 220, 80)
+			hpLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+		elseif ratio > 0.25 then
+			hpBarFill.BackgroundColor3 = Color3.fromRGB(220, 200, 40)
+			hpLabel.TextColor3 = Color3.fromRGB(255, 220, 60)
+		else
+			hpBarFill.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+			hpLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+		end
+
+		-- Auto-reset when HP hits 0
+		if newHealth <= 0 then
+			task.delay(3, function()
+				if humanoid and humanoid.Parent then
+					humanoid.Health = DUMMY_MAX_HP
+					hpLabel.Text = DUMMY_MAX_HP .. "/" .. DUMMY_MAX_HP .. " HP"
+					hpBarFill.Size = UDim2.new(1, 0, 1, 0)
+					hpBarFill.BackgroundColor3 = Color3.fromRGB(80, 220, 80)
+					hpLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+				end
+			end)
+		end
+	end)
+
+	-- Parent to workspace
+	dummy.Parent = workspace
+
+	table.insert(activeDummies, dummy)
+
+	return dummy
+end
+
+------------------------------------------------------------------------
+-- REMOVE ALL DUMMIES
+------------------------------------------------------------------------
+
+local function RemoveAllDummies()
+	for _, dummy in ipairs(activeDummies) do
+		if dummy and dummy.Parent then
+			dummy:Destroy()
+		end
+	end
+	activeDummies = {}
+end
+
+------------------------------------------------------------------------
+-- RESET ALL DUMMIES HP
+------------------------------------------------------------------------
+
+local function ResetAllDummies()
+	for _, dummy in ipairs(activeDummies) do
+		if dummy and dummy.Parent then
+			local hum = dummy:FindFirstChildOfClass("Humanoid")
+			if hum then
+				hum.Health = hum.MaxHealth
+			end
+		end
+	end
+end
+
+------------------------------------------------------------------------
+-- PUBLIC API
+------------------------------------------------------------------------
+
+function DummyHandler.SpawnDummy(position)
+	return CreateDummy(position)
+end
+
+function DummyHandler.RemoveAll()
+	RemoveAllDummies()
+end
+
+function DummyHandler.ResetAll()
+	ResetAllDummies()
+end
+
+function DummyHandler.GetDummies()
+	return activeDummies
+end
+
+print("[DummyHandler] System initialized.")
+
+return DummyHandler
