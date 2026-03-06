@@ -1,0 +1,646 @@
+--[[
+    CombatHandler (ModuleScript)
+    Server-authoritative combat system.
+    
+    Handles: M1 combos, blocking, parrying, dodging,
+    weapon moves (Z/X/C/R), uptilt, air crit.
+    Works on both players and dummies.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+
+local WeaponConfig = require(ReplicatedStorage:WaitForChild("WeaponConfig"))
+local CombatConfig = require(ReplicatedStorage:WaitForChild("CombatConfig"))
+local DataManager = require(ServerScriptService:WaitForChild("DataManager"))
+
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+
+local CombatHandler = {}
+
+local KOHandler = nil -- loaded later to avoid circular dependency
+
+------------------------------------------------------------------------
+-- CREATE REMOTES (only if they don't already exist)
+------------------------------------------------------------------------
+
+local function GetOrCreateRemote(className, name)
+	local existing = Remotes:FindFirstChild(name)
+	if existing then return existing end
+	local remote = Instance.new(className)
+	remote.Name = name
+	remote.Parent = Remotes
+	return remote
+end
+
+local CombatAction = GetOrCreateRemote("RemoteEvent", "CombatAction")
+local CombatFeedback = GetOrCreateRemote("RemoteEvent", "CombatFeedback")
+local CombatVFX = GetOrCreateRemote("RemoteEvent", "CombatVFX")
+
+------------------------------------------------------------------------
+-- PLAYER COMBAT STATE
+------------------------------------------------------------------------
+
+local PlayerStates = {}
+
+local function GetCombatState(player)
+	if not PlayerStates[player.UserId] then
+		PlayerStates[player.UserId] = {
+			State = "Idle",
+			LastM1Time = 0,
+			ComboCount = 0,
+			LastDodgeTime = 0,
+			BlockStartTime = 0,
+			IsBlocking = false,
+			IFrames = false,
+			WeaponEquipped = false,
+			Cooldowns = {},
+			StunEndTime = 0,
+		}
+	end
+	return PlayerStates[player.UserId]
+end
+
+local function SetState(player, state, duration)
+	local cs = GetCombatState(player)
+	cs.State = state
+
+	if duration and duration > 0 then
+		if state == "Stunned" then
+			cs.StunEndTime = os.clock() + duration
+		end
+		task.delay(duration, function()
+			if PlayerStates[player.UserId] and PlayerStates[player.UserId].State == state then
+				PlayerStates[player.UserId].State = "Idle"
+			end
+		end)
+	end
+end
+
+local function IsOnCooldown(player, moveName)
+	local cs = GetCombatState(player)
+	local cdEnd = cs.Cooldowns[moveName]
+	if cdEnd and os.clock() < cdEnd then
+		return true, cdEnd - os.clock()
+	end
+	return false, 0
+end
+
+local function SetCooldown(player, moveName, duration)
+	local cs = GetCombatState(player)
+	cs.Cooldowns[moveName] = os.clock() + duration
+end
+
+------------------------------------------------------------------------
+-- HIT DETECTION
+-- Returns a unified list of hit targets.
+-- Each entry: {Type = "Player"/"Dummy", Player = ..., Humanoid = ..., RootPart = ...}
+------------------------------------------------------------------------
+
+local function GetHitTargets(attacker, range, isAOE)
+	local character = attacker.Character
+	if not character then return {} end
+
+	local root = character:FindFirstChild("HumanoidRootPart")
+	if not root then return {} end
+
+	local hits = {}
+	local attackPos = root.Position
+	local attackDir = root.CFrame.LookVector
+
+	local function CheckTarget(targetRoot, targetHumanoid, targetType, targetRef)
+		if not targetRoot or not targetHumanoid then return end
+		if targetHumanoid.Health <= 0 then return end
+
+		local toTarget = targetRoot.Position - attackPos
+		local distance = toTarget.Magnitude
+
+		if distance > range then return end
+
+		if isAOE then
+			table.insert(hits, {
+				Type = targetType,
+				Player = targetRef,
+				Humanoid = targetHumanoid,
+				RootPart = targetRoot,
+			})
+		else
+			-- Directional: check if target is in front (~70 degree cone)
+			if distance < 1 then
+				-- Basically on top of us, count as hit
+				table.insert(hits, {
+					Type = targetType,
+					Player = targetRef,
+					Humanoid = targetHumanoid,
+					RootPart = targetRoot,
+				})
+			else
+				local dot = attackDir:Dot(toTarget.Unit)
+				if dot > 0.3 then
+					table.insert(hits, {
+						Type = targetType,
+						Player = targetRef,
+						Humanoid = targetHumanoid,
+						RootPart = targetRoot,
+					})
+				end
+			end
+		end
+	end
+
+	-- Check all players
+	for _, target in ipairs(Players:GetPlayers()) do
+		if target ~= attacker and target.Character then
+			local tRoot = target.Character:FindFirstChild("HumanoidRootPart")
+			local tHum = target.Character:FindFirstChildOfClass("Humanoid")
+			CheckTarget(tRoot, tHum, "Player", target)
+		end
+	end
+
+	-- Check all dummies
+	for _, obj in ipairs(workspace:GetChildren()) do
+		if obj.Name == "CombatDummy" and obj:IsA("Model") then
+			local dRoot = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
+			local dHum = obj:FindFirstChildOfClass("Humanoid")
+			CheckTarget(dRoot, dHum, "Dummy", obj)
+		end
+	end
+
+	return hits
+end
+
+------------------------------------------------------------------------
+-- APPLY DAMAGE
+-- Unified function that works on both players and dummies.
+------------------------------------------------------------------------
+
+local function ApplyDamage(attacker, hitData, baseDamage, moveType, weaponData)
+	if not hitData or not hitData.Humanoid then return false, 0 end
+
+	local targetHumanoid = hitData.Humanoid
+	local targetRoot = hitData.RootPart
+
+	if targetHumanoid.Health <= 0 then return false, 0 end
+
+	-- Calculate damage
+	local damage = baseDamage * (weaponData.DamageMultiplier or 1.0)
+
+	-- Skill tree bonuses
+	local attackerData = DataManager.GetData(attacker)
+	if attackerData then
+		if moveType == "M1" then
+			local strPoints = attackerData.StrengthPoints or 0
+			damage = damage * (1 + strPoints * CombatConfig.StrengthM1Bonus)
+		else
+			local masPoints = attackerData.MasteryPoints or 0
+			damage = damage * (1 + masPoints * CombatConfig.MasteryAbilityBonus)
+		end
+	end
+
+	-- DUMMY TARGET — just apply damage directly
+	if hitData.Type == "Dummy" then
+		damage = math.floor(damage + 0.5)
+		targetHumanoid:TakeDamage(damage)
+
+		if targetRoot then
+			CombatVFX:FireAllClients("Hit", targetRoot.Position)
+		end
+
+		print("[Combat] Hit dummy for " .. damage .. " damage")
+		return true, damage
+	end
+
+	-- PLAYER TARGET — check blocking, parrying, i-frames, KO
+	local target = hitData.Player
+	local targetState = GetCombatState(target)
+
+	-- Check i-frames
+	if targetState.IFrames then
+		return false, 0
+	end
+
+	-- Check blocking
+	if targetState.IsBlocking then
+		-- Check for parry
+		local timeSinceBlock = os.clock() - targetState.BlockStartTime
+		if timeSinceBlock <= WeaponConfig.Combat.ParryWindow then
+			-- PARRIED!
+			SetState(attacker, "Stunned", WeaponConfig.Combat.ParryStun)
+
+			CombatFeedback:FireClient(attacker, "Parried", target)
+			CombatFeedback:FireClient(target, "ParrySuccess", attacker)
+
+			if targetRoot then
+				CombatVFX:FireAllClients("Parry", targetRoot.Position)
+			end
+
+			local attackerRoot = attacker.Character and attacker.Character:FindFirstChild("HumanoidRootPart")
+			if attackerRoot and targetRoot then
+				local pushDir = (attackerRoot.Position - targetRoot.Position).Unit
+				attackerRoot.Velocity = pushDir * CombatConfig.Knockback.Parry
+			end
+
+			return false, 0
+		end
+
+		-- Normal block
+		damage = damage * (1 - WeaponConfig.Combat.BlockDamageReduction)
+
+		local attackerRoot = attacker.Character and attacker.Character:FindFirstChild("HumanoidRootPart")
+		if targetRoot and attackerRoot then
+			local pushDir = (targetRoot.Position - attackerRoot.Position).Unit
+			targetRoot.Velocity = pushDir * WeaponConfig.Combat.BlockPushback
+		end
+
+		damage = math.floor(damage + 0.5)
+
+		CombatFeedback:FireClient(target, "Blocked", attacker, damage)
+		if targetRoot then
+			CombatVFX:FireAllClients("Block", targetRoot.Position)
+		end
+
+		targetHumanoid:TakeDamage(damage)
+		return true, damage
+	end
+
+	-- Not blocking — full damage + stun
+	local stunDuration = WeaponConfig.Combat.M1HitStun
+	if moveType ~= "M1" then
+		stunDuration = 0.4
+	end
+	SetState(target, "Stunned", stunDuration)
+
+	damage = math.floor(damage + 0.5)
+
+	-- Check KO
+	if targetHumanoid.Health - damage <= 0 then
+		if KOHandler then
+			targetHumanoid.Health = 1
+			KOHandler.KnockOut(target)
+		else
+			targetHumanoid:TakeDamage(damage)
+		end
+	else
+		targetHumanoid:TakeDamage(damage)
+	end
+
+	-- Notify KO handler (interrupts carry/grip)
+	if KOHandler then
+		KOHandler.OnPlayerDamaged(target, attacker)
+	end
+
+	CombatFeedback:FireClient(target, "Hit", attacker, damage)
+	if targetRoot then
+		CombatVFX:FireAllClients("Hit", targetRoot.Position)
+	end
+
+	print("[Combat] Hit " .. target.Name .. " for " .. damage .. " damage")
+	return true, damage
+end
+
+------------------------------------------------------------------------
+-- PROCESS COMBAT ACTIONS
+------------------------------------------------------------------------
+
+CombatAction.OnServerEvent:Connect(function(player, actionType, actionData)
+	local cs = GetCombatState(player)
+	local character = player.Character
+	if not character then return end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then return end
+
+	-- EQUIP / UNEQUIP
+	if actionType == "Equip" then
+		cs.WeaponEquipped = actionData and actionData.Equipped or false
+		return
+	end
+
+	-- Must have weapon equipped for all combat actions
+	if not cs.WeaponEquipped then return end
+
+	-- Can't act while stunned
+	if cs.State == "Stunned" and os.clock() < cs.StunEndTime then
+		return
+	end
+
+	local data = DataManager.GetData(player)
+	if not data then return end
+
+	local weaponId = data.EquippedWeapon or "iron_blade"
+	local weapon = WeaponConfig.GetWeaponById(weaponId)
+	if not weapon then return end
+
+	local root = character:FindFirstChild("HumanoidRootPart")
+	if not root then return end
+
+	----------------------------------------------------------------
+	-- M1 ATTACK
+	----------------------------------------------------------------
+	if actionType == "M1" then
+		local now = os.clock()
+
+		-- Cooldown between swings
+		if now - cs.LastM1Time < 0.3 then return end
+
+		-- Reset combo if too slow
+		if now - cs.LastM1Time > WeaponConfig.Combat.M1ResetTime then
+			cs.ComboCount = 0
+		end
+
+		cs.ComboCount = cs.ComboCount + 1
+		if cs.ComboCount > weapon.M1.TotalHits then
+			cs.ComboCount = 1
+		end
+
+		cs.LastM1Time = now
+		cs.State = "Attacking"
+
+		local hitDamage = weapon.M1.Damage[cs.ComboCount] or 5
+		local range = WeaponConfig.Combat.M1Range
+
+		-- Find and damage targets
+		local hits = GetHitTargets(player, range, false)
+		local didHit = false
+
+		for _, hitData in ipairs(hits) do
+			local success = ApplyDamage(player, hitData, hitDamage, "M1", weapon)
+			if success then didHit = true end
+		end
+
+		-- Feedback
+		CombatFeedback:FireClient(player, "M1Hit", cs.ComboCount, didHit)
+
+		-- Endlag
+		local isLastHit = cs.ComboCount == weapon.M1.TotalHits
+		local endlag = isLastHit and weapon.M1.Endlag or 0.15
+
+		task.delay(endlag, function()
+			if PlayerStates[player.UserId] and PlayerStates[player.UserId].State == "Attacking" then
+				PlayerStates[player.UserId].State = "Idle"
+			end
+		end)
+
+		----------------------------------------------------------------
+		-- BLOCK START
+		----------------------------------------------------------------
+	elseif actionType == "BlockStart" then
+		cs.IsBlocking = true
+		cs.BlockStartTime = os.clock()
+		cs.State = "Blocking"
+
+		----------------------------------------------------------------
+		-- BLOCK END
+		----------------------------------------------------------------
+	elseif actionType == "BlockEnd" then
+		cs.IsBlocking = false
+		if cs.State == "Blocking" then
+			cs.State = "Idle"
+		end
+
+		----------------------------------------------------------------
+		-- DODGE (directional)
+		----------------------------------------------------------------
+	elseif actionType == "Dodge" then
+		local now = os.clock()
+		if now - cs.LastDodgeTime < WeaponConfig.Combat.DodgeCooldown then
+			return
+		end
+
+		cs.LastDodgeTime = now
+		SetState(player, "Dodging", WeaponConfig.Combat.DodgeDuration)
+
+		-- I-frames
+		cs.IFrames = true
+		task.delay(WeaponConfig.Combat.DodgeIFrames, function()
+			if PlayerStates[player.UserId] then
+				PlayerStates[player.UserId].IFrames = false
+			end
+		end)
+
+		-- Directional dodge
+		local dodgeDir = root.CFrame.LookVector -- default forward
+
+		if actionData and actionData.Direction then
+			-- Client sends the movement direction (W/A/S/D)
+			local dir = actionData.Direction
+			if typeof(dir) == "Vector3" and dir.Magnitude > 0 then
+				dodgeDir = Vector3.new(dir.X, 0, dir.Z).Unit
+			end
+		end
+
+		-- Apply dodge velocity
+		local dodgeSpeed = WeaponConfig.Combat.DodgeDistance / WeaponConfig.Combat.DodgeDuration
+		root.Velocity = dodgeDir * dodgeSpeed + Vector3.new(0, 5, 0) -- slight upward pop
+
+		CombatFeedback:FireClient(player, "Dodge")
+		CombatVFX:FireAllClients("Dodge", root.Position, dodgeDir)
+
+		----------------------------------------------------------------
+		-- UPTILT (CTRL + M1)
+		----------------------------------------------------------------
+	elseif actionType == "Uptilt" then
+		local onCD = IsOnCooldown(player, "Uptilt")
+		if onCD then return end
+
+		cs.State = "Attacking"
+		SetCooldown(player, "Uptilt", WeaponConfig.Combat.UptiltCooldown)
+
+		local hits = GetHitTargets(player, WeaponConfig.Combat.UptiltRange, false)
+		local didHit = false
+
+		for _, hitData in ipairs(hits) do
+			local success = ApplyDamage(player, hitData, WeaponConfig.Combat.UptiltDamage, "M1", weapon)
+			if success then
+				didHit = true
+				-- Launch the target upward
+				if hitData.RootPart then
+					hitData.RootPart.Velocity = Vector3.new(0, WeaponConfig.Combat.UptiltLaunchHeight * 5, 0)
+				end
+			end
+		end
+
+		CombatFeedback:FireClient(player, "Uptilt", didHit)
+		CombatVFX:FireAllClients("Uptilt", root.Position)
+
+		task.delay(0.5, function()
+			if PlayerStates[player.UserId] and PlayerStates[player.UserId].State == "Attacking" then
+				PlayerStates[player.UserId].State = "Idle"
+			end
+		end)
+
+		----------------------------------------------------------------
+		-- WEAPON MOVES (Z, X, C, R)
+		----------------------------------------------------------------
+	elseif actionType == "Move" then
+		local moveKey = actionData and actionData.Key
+		if not moveKey then return end
+
+		-- AIR CRIT (R while airborne)
+		if moveKey == "R" and actionData.Airborne then
+			local onCD = IsOnCooldown(player, "AirCrit")
+			if onCD then
+				CombatFeedback:FireClient(player, "OnCooldown", "Air Crit", select(2, IsOnCooldown(player, "AirCrit")))
+				return
+			end
+
+			cs.State = "UsingMove"
+			SetCooldown(player, "AirCrit", WeaponConfig.Combat.AirCritCooldown)
+
+			-- Launch forward and DOWN — slam into the ground
+			local slamDir = root.CFrame.LookVector
+			root.Velocity = slamDir * WeaponConfig.Combat.AirCritRange * 2 + Vector3.new(0, -60, 0)
+
+			-- Wait for impact
+			task.delay(0.4, function()
+				if not character.Parent then return end
+
+				-- Hit everything around landing position
+				local landPos = root.Position
+				local airHits = GetHitTargets(player, WeaponConfig.Combat.AirCritAOE, true)
+
+				for _, hitData in ipairs(airHits) do
+					ApplyDamage(player, hitData, WeaponConfig.Combat.AirCritDamage, "AirCrit", weapon)
+					-- Push targets away from slam
+					if hitData.RootPart then
+						local pushDir = (hitData.RootPart.Position - landPos).Unit
+						hitData.RootPart.Velocity = pushDir * 20 + Vector3.new(0, 10, 0)
+					end
+				end
+
+				CombatVFX:FireAllClients("AirCrit", landPos)
+
+				task.delay(0.4, function()
+					if PlayerStates[player.UserId] and PlayerStates[player.UserId].State == "UsingMove" then
+						PlayerStates[player.UserId].State = "Idle"
+					end
+				end)
+			end)
+
+			CombatFeedback:FireClient(player, "AirCrit")
+			return
+		end
+
+		-- GROUND MOVES (Z, X, C, R on ground)
+		local moveData
+		if moveKey == "Z" then moveData = weapon.Z
+		elseif moveKey == "X" then moveData = weapon.X
+		elseif moveKey == "C" then moveData = weapon.C
+		elseif moveKey == "R" then moveData = weapon.Crit
+		end
+
+		if not moveData then return end
+
+		local moveName = moveData.Name
+		local onCD, remaining = IsOnCooldown(player, moveName)
+		if onCD then
+			CombatFeedback:FireClient(player, "OnCooldown", moveName, remaining)
+			return
+		end
+
+		cs.State = "UsingMove"
+		SetCooldown(player, moveName, moveData.Cooldown)
+
+		-- Windup phase
+		task.delay(moveData.Windup or 0.2, function()
+			if not character.Parent then return end
+			if not root.Parent then return end
+
+			-- Dash if move has one
+			if moveData.DashDistance then
+				local dashDir = root.CFrame.LookVector
+				if moveData.DashDistance < 0 then
+					dashDir = -dashDir
+				end
+				root.Velocity = dashDir * math.abs(moveData.DashDistance) / 0.2
+			end
+
+			-- Hit detection
+			local range = moveData.Range or 8
+			local isAOE = moveData.IsAOE or false
+			local targets = GetHitTargets(player, range, isAOE)
+
+			if moveData.MultiHit then
+				-- Multi-hit move
+				for hitIndex, hitDmg in ipairs(moveData.MultiHit) do
+					task.delay((moveData.MultiTiming and moveData.MultiTiming[hitIndex]) or 0, function()
+						for _, hitData in ipairs(targets) do
+							ApplyDamage(player, hitData, hitDmg, "Move", weapon)
+						end
+					end)
+				end
+			else
+				-- Single hit
+				for _, hitData in ipairs(targets) do
+					local hit, dmg = ApplyDamage(player, hitData, moveData.Damage, "Move", weapon)
+
+					if hit and hitData.RootPart then
+						-- Knockback
+						if moveData.Knockback then
+							local pushDir = (hitData.RootPart.Position - root.Position).Unit
+							hitData.RootPart.Velocity = pushDir * moveData.Knockback
+						end
+
+						-- Pull
+						if moveData.PullDistance then
+							local pullDir = (root.Position - hitData.RootPart.Position).Unit
+							hitData.RootPart.Velocity = pullDir * moveData.PullDistance / 0.3
+						end
+
+						-- Launch
+						if moveData.LaunchHeight then
+							hitData.RootPart.Velocity = Vector3.new(0, moveData.LaunchHeight * 5, 0)
+						end
+
+						-- Bleed DOT
+						if moveData.Bleed and hitData.Humanoid then
+							task.spawn(function()
+								local bleed = moveData.Bleed
+								for tick = 1, bleed.Duration do
+									task.wait(bleed.TickRate)
+									if hitData.Humanoid and hitData.Humanoid.Health > 0 then
+										hitData.Humanoid:TakeDamage(bleed.Damage)
+									end
+								end
+							end)
+						end
+					end
+				end
+			end
+
+			-- VFX
+			CombatVFX:FireAllClients(moveData.VFX or "GenericSlash", root.Position, root.CFrame.LookVector)
+			CombatFeedback:FireClient(player, "MoveHit", moveName, #targets)
+		end)
+
+		-- Endlag — return to idle
+		local totalTime = (moveData.Windup or 0.2) + (moveData.Endlag or 0.5)
+		task.delay(totalTime, function()
+			if PlayerStates[player.UserId] and PlayerStates[player.UserId].State == "UsingMove" then
+				PlayerStates[player.UserId].State = "Idle"
+			end
+		end)
+	end
+end)
+
+------------------------------------------------------------------------
+-- CLEANUP
+------------------------------------------------------------------------
+
+Players.PlayerRemoving:Connect(function(player)
+	PlayerStates[player.UserId] = nil
+end)
+
+------------------------------------------------------------------------
+-- LATE-LOAD KO HANDLER
+------------------------------------------------------------------------
+
+task.spawn(function()
+	KOHandler = require(ServerScriptService:WaitForChild("KOHandler"))
+	print("[CombatHandler] KOHandler linked.")
+end)
+
+print("[CombatHandler] System initialized.")
+
+return CombatHandler
