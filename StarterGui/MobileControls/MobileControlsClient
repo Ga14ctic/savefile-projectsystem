@@ -1,0 +1,158 @@
+--[[
+    MobileControlsClient (LocalScript)
+    Creates touch buttons for mobile players.
+    Only visible on mobile devices.
+    
+    Buttons:
+    - MENU (replaces M key)
+    - TAB (replaces Tab key)
+    - Hotbar slots are tap-to-activate
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Platform = require(ReplicatedStorage:WaitForChild("Platform"))
+
+local screenGui = script.Parent
+
+-- Only run on mobile
+if not Platform.IsMobile() then
+	screenGui.Enabled = false
+	return
+end
+
+------------------------------------------------------------------------
+-- HELPERS
+------------------------------------------------------------------------
+
+local function Create(className, props)
+	local inst = Instance.new(className)
+	for k, v in pairs(props) do
+		inst[k] = v
+	end
+	return inst
+end
+
+local function AddCorner(parent, radius)
+	Create("UICorner", {CornerRadius = UDim.new(0, radius or 8), Parent = parent})
+end
+
+------------------------------------------------------------------------
+-- ACTION BUTTONS (right side of screen)
+------------------------------------------------------------------------
+
+local buttonContainer = Create("Frame", {
+	Name = "ActionButtons",
+	Size = UDim2.new(0, 55, 0, 0),
+	Position = UDim2.new(1, -65, 0.3, 0),
+	BackgroundTransparency = 1,
+	AutomaticSize = Enum.AutomaticSize.Y,
+	Parent = screenGui,
+})
+
+Create("UIListLayout", {
+	SortOrder = Enum.SortOrder.LayoutOrder,
+	Padding = UDim.new(0, 8),
+	HorizontalAlignment = Enum.HorizontalAlignment.Center,
+	Parent = buttonContainer,
+})
+
+-- MENU button (replaces M key)
+local menuBtn = Create("TextButton", {
+	Name = "MenuBtn",
+	Size = UDim2.new(0, 50, 0, 50),
+	BackgroundColor3 = Color3.fromRGB(25, 25, 35),
+	BackgroundTransparency = 0.2,
+	Text = "☰",
+	TextColor3 = Color3.fromRGB(220, 220, 230),
+	TextSize = 24,
+	Font = Enum.Font.GothamBold,
+	LayoutOrder = 1,
+	Parent = buttonContainer,
+})
+AddCorner(menuBtn, 10)
+Create("UIStroke", {
+	Color = Color3.fromRGB(60, 60, 80),
+	Thickness = 1.5,
+	Parent = menuBtn,
+})
+
+-- Label under menu button
+Create("TextLabel", {
+	Size = UDim2.new(0, 50, 0, 14),
+	BackgroundTransparency = 1,
+	Text = "MENU",
+	TextColor3 = Color3.fromRGB(120, 120, 140),
+	TextSize = 9,
+	Font = Enum.Font.GothamBold,
+	LayoutOrder = 2,
+	Parent = buttonContainer,
+})
+
+-- TAB button (replaces Tab key)
+local tabBtn = Create("TextButton", {
+	Name = "TabBtn",
+	Size = UDim2.new(0, 50, 0, 50),
+	BackgroundColor3 = Color3.fromRGB(25, 25, 35),
+	BackgroundTransparency = 0.2,
+	Text = "👥",
+	TextColor3 = Color3.fromRGB(220, 220, 230),
+	TextSize = 22,
+	Font = Enum.Font.GothamBold,
+	LayoutOrder = 3,
+	Parent = buttonContainer,
+})
+AddCorner(tabBtn, 10)
+Create("UIStroke", {
+	Color = Color3.fromRGB(60, 60, 80),
+	Thickness = 1.5,
+	Parent = tabBtn,
+})
+
+Create("TextLabel", {
+	Size = UDim2.new(0, 50, 0, 14),
+	BackgroundTransparency = 1,
+	Text = "PLAYERS",
+	TextColor3 = Color3.fromRGB(120, 120, 140),
+	TextSize = 9,
+	Font = Enum.Font.GothamBold,
+	LayoutOrder = 4,
+	Parent = buttonContainer,
+})
+
+------------------------------------------------------------------------
+-- FIRE VIRTUAL KEY PRESSES
+-- We use BindableEvents so the existing UI scripts react to mobile taps
+-- without rewriting all their input logic.
+------------------------------------------------------------------------
+
+-- Create BindableEvents for virtual key presses
+local virtualInput = Instance.new("Folder")
+virtualInput.Name = "VirtualInput"
+virtualInput.Parent = ReplicatedStorage
+
+local menuToggle = Instance.new("BindableEvent")
+menuToggle.Name = "MenuToggle"
+menuToggle.Parent = virtualInput
+
+local tabToggle = Instance.new("BindableEvent")
+tabToggle.Name = "TabToggle"
+tabToggle.Parent = virtualInput
+
+local hotbarPress = Instance.new("BindableEvent")
+hotbarPress.Name = "HotbarPress"
+hotbarPress.Parent = virtualInput
+
+-- Button connections
+menuBtn.MouseButton1Click:Connect(function()
+	menuToggle:Fire()
+end)
+
+local tabVisible = false
+tabBtn.MouseButton1Click:Connect(function()
+	tabVisible = not tabVisible
+	tabToggle:Fire(tabVisible)
+end)
+
+print("[MobileControls] Mobile buttons initialized.")
