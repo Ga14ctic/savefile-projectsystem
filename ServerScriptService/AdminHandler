@@ -1,0 +1,508 @@
+--[[
+    AdminHandler (ModuleScript)
+    Processes admin commands from verified admins.
+    Server-authoritative — validates everything.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+
+local AdminConfig = require(ReplicatedStorage:WaitForChild("AdminConfig"))
+local DataManager = require(ServerScriptService:WaitForChild("DataManager"))
+
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+
+local AdminHandler = {}
+
+------------------------------------------------------------------------
+-- CREATE REMOTES
+------------------------------------------------------------------------
+
+local AdminCommand = Instance.new("RemoteEvent")
+AdminCommand.Name = "AdminCommand"
+AdminCommand.Parent = Remotes
+
+local AdminResponse = Instance.new("RemoteEvent")
+AdminResponse.Name = "AdminResponse"
+AdminResponse.Parent = Remotes
+
+local AdminCheck = Instance.new("RemoteFunction")
+AdminCheck.Name = "AdminCheck"
+AdminCheck.Parent = Remotes
+
+------------------------------------------------------------------------
+-- ADMIN VERIFICATION
+------------------------------------------------------------------------
+
+local function IsAdmin(player)
+	-- Check by UserId
+	for _, id in ipairs(AdminConfig.Admins) do
+		if player.UserId == id then
+			return true
+		end
+	end
+
+	-- Check by username
+	for _, username in ipairs(AdminConfig.AdminUsernames) do
+		if player.Name == username then
+			return true
+		end
+	end
+
+	return false
+end
+
+AdminCheck.OnServerInvoke = function(player)
+	return IsAdmin(player)
+end
+
+------------------------------------------------------------------------
+-- FIND PLAYER BY PARTIAL NAME
+------------------------------------------------------------------------
+
+local function FindPlayer(partialName)
+	partialName = string.lower(partialName)
+
+	for _, p in ipairs(Players:GetPlayers()) do
+		if string.lower(p.Name) == partialName then
+			return p
+		end
+	end
+
+	-- Partial match
+	for _, p in ipairs(Players:GetPlayers()) do
+		if string.find(string.lower(p.Name), partialName, 1, true) then
+			return p
+		end
+	end
+
+	-- Try character display name
+	for _, p in ipairs(Players:GetPlayers()) do
+		local charName = p:FindFirstChild("CharacterDisplayName")
+		if charName and string.find(string.lower(charName.Value), partialName, 1, true) then
+			return p
+		end
+	end
+
+	return nil
+end
+
+------------------------------------------------------------------------
+-- COMMAND PROCESSING
+------------------------------------------------------------------------
+
+local function SendResponse(admin, message, success)
+	AdminResponse:FireClient(admin, message, success)
+end
+
+-- Map command names to data keys
+local COMMAND_TO_KEY = {
+	clan = "Clan",
+	clanrarity = "ClanRarity",
+	rank = "Rank",
+	points = "SkillPoints",
+	exp = "EXP",
+	gold = "Gold",
+	faction = "Faction",
+	name = "CharacterName",
+	strength = "StrengthPoints",
+	dexterity = "DexterityPoints",
+	mastery = "MasteryPoints",
+	kills = "PlayersKilled",
+	guild = "OfficialGuild",
+	guildrank = "OfficialGuildRank",
+	unofficialguild = "UnofficialGuild",
+	unofficialtag = "UnofficialGuildTag",
+}
+
+-- Commands that expect numbers
+local NUMBER_COMMANDS = {
+	points = true,
+	exp = true,
+	gold = true,
+	strength = true,
+	dexterity = true,
+	mastery = true,
+	kills = true,
+}
+
+AdminCommand.OnServerEvent:Connect(function(player, rawCommand)
+	-- Verify admin
+	if not IsAdmin(player) then
+		warn("[Admin] Non-admin " .. player.Name .. " tried to use admin command")
+		return
+	end
+
+	-- Parse command
+	-- Handle quoted strings (for faction names with spaces etc)
+	local args = {}
+	local currentArg = ""
+	local inQuotes = false
+
+	for i = 1, #rawCommand do
+		local char = string.sub(rawCommand, i, i)
+
+		if char == '"' then
+			inQuotes = not inQuotes
+		elseif char == " " and not inQuotes then
+			if #currentArg > 0 then
+				table.insert(args, currentArg)
+				currentArg = ""
+			end
+		else
+			currentArg = currentArg .. char
+		end
+	end
+	if #currentArg > 0 then
+		table.insert(args, currentArg)
+	end
+
+	if #args == 0 then
+		SendResponse(player, "No command entered.", false)
+		return
+	end
+
+	local command = string.lower(args[1])
+
+	-- HELP command
+	if command == "help" then
+		local helpText = "Available commands:\n"
+		for _, cmd in ipairs(AdminConfig.Commands) do
+			local argNames = {}
+			for _, arg in ipairs(cmd.Args) do
+				table.insert(argNames, "[" .. arg.Name .. "]")
+			end
+			helpText = helpText .. "  " .. cmd.Name .. " " .. table.concat(argNames, " ") .. " — " .. cmd.Description .. "\n"
+		end
+		SendResponse(player, helpText, true)
+		return
+	end
+
+	-- RESET command
+	if command == "reset" then
+		if #args < 2 then
+			SendResponse(player, "Usage: reset [player]", false)
+			return
+		end
+
+		local target = FindPlayer(args[2])
+		if not target then
+			SendResponse(player, "Player not found: " .. args[2], false)
+			return
+		end
+
+		local data = DataManager.GetData(target)
+		if not data then
+			SendResponse(player, "No data for " .. target.Name, false)
+			return
+		end
+
+		local totalRefund = (data.StrengthPoints or 0) + (data.DexterityPoints or 0) + (data.MasteryPoints or 0)
+
+		DataManager.SetMultiple(target, {
+			StrengthPoints = 0,
+			DexterityPoints = 0,
+			MasteryPoints = 0,
+			SkillPoints = (data.SkillPoints or 0) + totalRefund,
+			EquippedMoves = {},
+		})
+
+		SendResponse(player, "Reset " .. target.Name .. "'s skill trees. Refunded " .. totalRefund .. " points.", true)
+		return
+	end
+
+	-- WEAPON command (needs to update display value too)
+	if command == "weapon" then
+		if #args < 3 then
+			SendResponse(player, "Usage: weapon [player] [weapon_id]", false)
+			return
+		end
+
+		local target = FindPlayer(args[2])
+		if not target then
+			SendResponse(player, "Player not found: " .. args[2], false)
+			return
+		end
+
+		local weaponId = args[3]
+		DataManager.SetValue(target, "EquippedWeapon", weaponId)
+
+		-- Update the display value so client sees the change
+		local weaponDisplay = target:FindFirstChild("EquippedWeaponDisplay")
+		if weaponDisplay then
+			weaponDisplay.Value = weaponId
+		end
+
+		-- Also add to owned if not already owned
+		local data = DataManager.GetData(target)
+		if data then
+			local owned = data.OwnedWeapons or {}
+			local alreadyOwned = false
+			for _, w in ipairs(owned) do
+				if w == weaponId then
+					alreadyOwned = true
+					break
+				end
+			end
+			if not alreadyOwned then
+				table.insert(owned, weaponId)
+				DataManager.SetValue(target, "OwnedWeapons", owned)
+			end
+		end
+
+		SendResponse(player, "Set " .. target.Name .. "'s weapon to: " .. weaponId, true)
+		print("[Admin] " .. player.Name .. " set " .. target.Name .. "'s weapon to " .. weaponId)
+		return
+	end
+
+	-- GIVEWEAPON command
+	if command == "giveweapon" then
+		if #args < 3 then
+			SendResponse(player, "Usage: giveweapon [player] [weapon_id]", false)
+			return
+		end
+
+		local target = FindPlayer(args[2])
+		if not target then
+			SendResponse(player, "Player not found: " .. args[2], false)
+			return
+		end
+
+		local weaponId = args[3]
+		local data = DataManager.GetData(target)
+		if not data then
+			SendResponse(player, "No data for " .. target.Name, false)
+			return
+		end
+
+		local owned = data.OwnedWeapons or {}
+
+		-- Check if already owned
+		for _, w in ipairs(owned) do
+			if w == weaponId then
+				SendResponse(player, target.Name .. " already owns " .. weaponId, false)
+				return
+			end
+		end
+
+		table.insert(owned, weaponId)
+		DataManager.SetValue(target, "OwnedWeapons", owned)
+		SendResponse(player, "Gave " .. weaponId .. " to " .. target.Name, true)
+		return
+	end
+	-- HP command (sets current health, not saved data)
+	if command == "hp" then
+		if #args < 3 then
+			SendResponse(player, "Usage: hp [player] [amount]", false)
+			return
+		end
+
+		local target = FindPlayer(args[2])
+		if not target then
+			SendResponse(player, "Player not found: " .. args[2], false)
+			return
+		end
+
+		local amount = tonumber(args[3])
+		if not amount then
+			SendResponse(player, "Invalid number.", false)
+			return
+		end
+
+		local char = target.Character
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.Health = amount
+			SendResponse(player, "Set " .. target.Name .. "'s HP to " .. amount, true)
+		else
+			SendResponse(player, target.Name .. " has no character.", false)
+		end
+		return
+	end
+
+	-- MAXHP command
+	if command == "maxhp" then
+		if #args < 3 then
+			SendResponse(player, "Usage: maxhp [player] [amount]", false)
+			return
+		end
+
+		local target = FindPlayer(args[2])
+		if not target then
+			SendResponse(player, "Player not found: " .. args[2], false)
+			return
+		end
+
+		local amount = tonumber(args[3])
+		if not amount then
+			SendResponse(player, "Invalid number.", false)
+			return
+		end
+
+		local char = target.Character
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.MaxHealth = amount
+			hum.Health = amount
+			SendResponse(player, "Set " .. target.Name .. "'s Max HP to " .. amount, true)
+		else
+			SendResponse(player, target.Name .. " has no character.", false)
+		end
+		return
+	end
+	-- DUMMY command
+	if command == "dummy" then
+		local action = args[2] and string.lower(args[2]) or "spawn"
+		local DummyHandler = require(ServerScriptService:WaitForChild("DummyHandler"))
+
+		if action == "spawn" then
+			local char = player.Character
+			if not char then
+				SendResponse(player, "No character found.", false)
+				return
+			end
+
+			local root = char:FindFirstChild("HumanoidRootPart")
+			if not root then
+				SendResponse(player, "No root part found.", false)
+				return
+			end
+
+			-- Spawn 10 studs in front of the player
+			local spawnPos = root.Position + root.CFrame.LookVector * 10 + Vector3.new(0, 3, 0)
+			DummyHandler.SpawnDummy(spawnPos)
+			SendResponse(player, "Spawned a combat dummy!", true)
+
+		elseif action == "remove" then
+			DummyHandler.RemoveAll()
+			SendResponse(player, "Removed all dummies.", true)
+
+		elseif action == "reset" then
+			DummyHandler.ResetAll()
+			SendResponse(player, "Reset all dummy HP.", true)
+
+		else
+			SendResponse(player, "Usage: dummy [spawn/remove/reset]", false)
+		end
+		return
+	end
+	-- Standard commands
+	local dataKey = COMMAND_TO_KEY[command]
+	if not dataKey then
+		SendResponse(player, "Unknown command: " .. command .. ". Type 'help' for list.", false)
+		return
+	end
+
+	if #args < 3 then
+		SendResponse(player, "Usage: " .. command .. " [player] [value]", false)
+		return
+	end
+
+	local target = FindPlayer(args[2])
+	if not target then
+		SendResponse(player, "Player not found: " .. args[2], false)
+		return
+	end
+
+	-- Get the value (everything after player name, joined back together)
+	local value = table.concat(args, " ", 3)
+
+	-- Convert to number if needed
+	if NUMBER_COMMANDS[command] then
+		value = tonumber(value)
+		if not value then
+			SendResponse(player, "Invalid number.", false)
+			return
+		end
+		value = math.floor(value)
+	end
+	-- Special handling: update guild display values after guild changes
+	if command == "guild" or command == "guildrank" or command == "unofficialtag" or command == "unofficialguild" then
+		-- Apply the value first
+		DataManager.SetValue(target, dataKey, value)
+
+		-- Refresh guild display
+		local targetData = DataManager.GetData(target)
+		if targetData then
+			-- We need to call GuildHandler's UpdateGuildDisplay
+			-- Since it creates values on the player, we replicate the logic here
+			local GuildConfig = require(ReplicatedStorage:WaitForChild("GuildConfig"))
+
+			-- Update unofficial tag
+			local unofficialTag = target:FindFirstChild("UnofficialGuildTag")
+			if unofficialTag then
+				unofficialTag.Value = targetData.UnofficialGuildTag or ""
+			end
+
+			-- Update official guild display
+			if targetData.OfficialGuild ~= "" then
+				local guildInfo = GuildConfig.GetGuildById(targetData.OfficialGuild)
+				if guildInfo then
+					local guildDisplay = target:FindFirstChild("GuildDisplay")
+					if guildDisplay then guildDisplay.Value = guildInfo.Name end
+
+					local guildTitle = target:FindFirstChild("GuildTitle")
+					if guildTitle then guildTitle.Value = guildInfo.Title end
+
+					local guildColorR = target:FindFirstChild("GuildColorR")
+					if guildColorR then guildColorR.Value = math.floor(guildInfo.Color.R * 255) end
+
+					local guildColorG = target:FindFirstChild("GuildColorG")
+					if guildColorG then guildColorG.Value = math.floor(guildInfo.Color.G * 255) end
+
+					local guildColorB = target:FindFirstChild("GuildColorB")
+					if guildColorB then guildColorB.Value = math.floor(guildInfo.Color.B * 255) end
+
+					local guildGradient = target:FindFirstChild("GuildGradient")
+					if guildGradient then guildGradient.Value = guildInfo.Gradient or false end
+
+					if guildInfo.Gradient and guildInfo.GradientEnd then
+						local r = target:FindFirstChild("GuildGradEndR")
+						local g = target:FindFirstChild("GuildGradEndG")
+						local b = target:FindFirstChild("GuildGradEndB")
+						if r then r.Value = math.floor(guildInfo.GradientEnd.R * 255) end
+						if g then g.Value = math.floor(guildInfo.GradientEnd.G * 255) end
+						if b then b.Value = math.floor(guildInfo.GradientEnd.B * 255) end
+					end
+
+					local titleColor = target:FindFirstChild("GuildTitleColor")
+					if titleColor and guildInfo.TitleColor then
+						titleColor.Value = string.format("%d,%d,%d",
+							math.floor(guildInfo.TitleColor.R * 255),
+							math.floor(guildInfo.TitleColor.G * 255),
+							math.floor(guildInfo.TitleColor.B * 255)
+						)
+					elseif titleColor then
+						titleColor.Value = ""
+					end
+				end
+			else
+				local guildDisplay = target:FindFirstChild("GuildDisplay")
+				if guildDisplay then guildDisplay.Value = "" end
+				local guildTitle = target:FindFirstChild("GuildTitle")
+				if guildTitle then guildTitle.Value = "" end
+			end
+		end
+
+		local displayValue = tostring(value)
+		SendResponse(player, "Set " .. target.Name .. "'s " .. command .. " to: " .. displayValue, true)
+		print("[Admin] " .. player.Name .. " set " .. target.Name .. "'s " .. dataKey .. " = " .. displayValue)
+		return -- skip the normal apply below
+	end
+	-- Apply the change
+	DataManager.SetValue(target, dataKey, value)
+
+	-- Special handling: update overhead when name/clan/rank changes
+	if command == "name" or command == "clan" or command == "rank" or command == "clanrarity" then
+		-- Overhead will auto-update via the Changed listeners
+	end
+
+	local displayValue = tostring(value)
+	SendResponse(player, "Set " .. target.Name .. "'s " .. command .. " to: " .. displayValue, true)
+	print("[Admin] " .. player.Name .. " set " .. target.Name .. "'s " .. dataKey .. " = " .. displayValue)
+end)
+
+print("[AdminHandler] System initialized.")
+
+return AdminHandler
