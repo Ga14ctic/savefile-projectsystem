@@ -1,0 +1,456 @@
+--[[
+    GuildHandler (ModuleScript)
+    Manages official and unofficial guild membership.
+    
+    Official guilds:
+    - Leaders can invite/kick/promote/demote
+    - Admin+ can manage ALL guilds including Monarch
+    
+    Unofficial guilds:
+    - Data only for now, will be fleshed out with NPCs later
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+
+local GuildConfig = require(ReplicatedStorage:WaitForChild("GuildConfig"))
+local AdminConfig = require(ReplicatedStorage:WaitForChild("AdminConfig"))
+local DataManager = require(ServerScriptService:WaitForChild("DataManager"))
+
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+
+local GuildHandler = {}
+
+------------------------------------------------------------------------
+-- CREATE REMOTES
+------------------------------------------------------------------------
+
+local GuildAction = Instance.new("RemoteEvent")
+GuildAction.Name = "GuildAction"
+GuildAction.Parent = Remotes
+
+local GuildResponse = Instance.new("RemoteEvent")
+GuildResponse.Name = "GuildResponse"
+GuildResponse.Parent = Remotes
+
+local GetGuildMembers = Instance.new("RemoteFunction")
+GetGuildMembers.Name = "GetGuildMembers"
+GetGuildMembers.Parent = Remotes
+
+------------------------------------------------------------------------
+-- ADMIN CHECK
+------------------------------------------------------------------------
+
+local function IsAdmin(player)
+	for _, id in ipairs(AdminConfig.Admins) do
+		if player.UserId == id then return true end
+	end
+	for _, username in ipairs(AdminConfig.AdminUsernames) do
+		if player.Name == username then return true end
+	end
+	return false
+end
+
+------------------------------------------------------------------------
+-- PERMISSION CHECK
+------------------------------------------------------------------------
+
+local function GetPermissions(guildRank)
+	return GuildConfig.Permissions[guildRank] or {}
+end
+
+local function CanManageGuild(player, targetGuildId)
+	-- Admins can manage any guild
+	if IsAdmin(player) then return true end
+
+	local data = DataManager.GetData(player)
+	if not data then return false end
+
+	-- Must be in the same guild
+	if data.OfficialGuild ~= targetGuildId then return false end
+
+	-- Must be Leader or Co-Leader
+	local rank = data.OfficialGuildRank
+	return rank == "Leader" or rank == "Co-Leader"
+end
+
+------------------------------------------------------------------------
+-- FIND PLAYER
+------------------------------------------------------------------------
+
+local function FindPlayer(partialName)
+	partialName = string.lower(partialName)
+	for _, p in ipairs(Players:GetPlayers()) do
+		if string.lower(p.Name) == partialName then return p end
+	end
+	for _, p in ipairs(Players:GetPlayers()) do
+		if string.find(string.lower(p.Name), partialName, 1, true) then return p end
+	end
+	return nil
+end
+
+------------------------------------------------------------------------
+-- SEND RESPONSE
+------------------------------------------------------------------------
+
+local function SendResponse(player, message, success)
+	GuildResponse:FireClient(player, message, success)
+end
+
+------------------------------------------------------------------------
+-- UPDATE DISPLAY VALUES
+------------------------------------------------------------------------
+
+local function UpdateGuildDisplay(player, data)
+	-- Create or update guild display values on the player object
+	local guildDisplay = player:FindFirstChild("GuildDisplay")
+	if not guildDisplay then
+		guildDisplay = Instance.new("StringValue")
+		guildDisplay.Name = "GuildDisplay"
+		guildDisplay.Parent = player
+	end
+
+	local guildTitle = player:FindFirstChild("GuildTitle")
+	if not guildTitle then
+		guildTitle = Instance.new("StringValue")
+		guildTitle.Name = "GuildTitle"
+		guildTitle.Parent = player
+	end
+
+	local guildColorR = player:FindFirstChild("GuildColorR")
+	if not guildColorR then
+		guildColorR = Instance.new("NumberValue")
+		guildColorR.Name = "GuildColorR"
+		guildColorR.Parent = player
+	end
+
+	local guildColorG = player:FindFirstChild("GuildColorG")
+	if not guildColorG then
+		guildColorG = Instance.new("NumberValue")
+		guildColorG.Name = "GuildColorG"
+		guildColorG.Parent = player
+	end
+
+	local guildColorB = player:FindFirstChild("GuildColorB")
+	if not guildColorB then
+		guildColorB = Instance.new("NumberValue")
+		guildColorB.Name = "GuildColorB"
+		guildColorB.Parent = player
+	end
+
+	-- Unofficial guild tag
+	local unofficialTag = player:FindFirstChild("UnofficialGuildTag")
+	if not unofficialTag then
+		unofficialTag = Instance.new("StringValue")
+		unofficialTag.Name = "UnofficialGuildTag"
+		unofficialTag.Parent = player
+	end
+
+	-- Guild gradient info
+	local guildGradient = player:FindFirstChild("GuildGradient")
+	if not guildGradient then
+		guildGradient = Instance.new("BoolValue")
+		guildGradient.Name = "GuildGradient"
+		guildGradient.Parent = player
+	end
+
+	local guildGradEndR = player:FindFirstChild("GuildGradEndR")
+	if not guildGradEndR then
+		guildGradEndR = Instance.new("NumberValue")
+		guildGradEndR.Name = "GuildGradEndR"
+		guildGradEndR.Parent = player
+	end
+
+	local guildGradEndG = player:FindFirstChild("GuildGradEndG")
+	if not guildGradEndG then
+		guildGradEndG = Instance.new("NumberValue")
+		guildGradEndG.Name = "GuildGradEndG"
+		guildGradEndG.Parent = player
+	end
+
+	local guildGradEndB = player:FindFirstChild("GuildGradEndB")
+	if not guildGradEndB then
+		guildGradEndB = Instance.new("NumberValue")
+		guildGradEndB.Name = "GuildGradEndB"
+		guildGradEndB.Parent = player
+	end
+
+	local guildTitleColor = player:FindFirstChild("GuildTitleColor")
+	if not guildTitleColor then
+		guildTitleColor = Instance.new("StringValue")
+		guildTitleColor.Name = "GuildTitleColor"
+		guildTitleColor.Parent = player
+	end
+
+	-- Set values based on official guild
+	if data.OfficialGuild ~= "" then
+		local guild = GuildConfig.GetGuildById(data.OfficialGuild)
+		if guild then
+			guildDisplay.Value = guild.Name
+			guildTitle.Value = guild.Title
+			guildColorR.Value = math.floor(guild.Color.R * 255)
+			guildColorG.Value = math.floor(guild.Color.G * 255)
+			guildColorB.Value = math.floor(guild.Color.B * 255)
+			guildGradient.Value = guild.Gradient or false
+
+			if guild.Gradient and guild.GradientEnd then
+				guildGradEndR.Value = math.floor(guild.GradientEnd.R * 255)
+				guildGradEndG.Value = math.floor(guild.GradientEnd.G * 255)
+				guildGradEndB.Value = math.floor(guild.GradientEnd.B * 255)
+			end
+
+			if guild.TitleColor then
+				guildTitleColor.Value = string.format("%d,%d,%d",
+					math.floor(guild.TitleColor.R * 255),
+					math.floor(guild.TitleColor.G * 255),
+					math.floor(guild.TitleColor.B * 255)
+				)
+			else
+				guildTitleColor.Value = ""
+			end
+		end
+	else
+		guildDisplay.Value = ""
+		guildTitle.Value = ""
+		guildColorR.Value = 0
+		guildColorG.Value = 0
+		guildColorB.Value = 0
+		guildGradient.Value = false
+		guildTitleColor.Value = ""
+	end
+
+	-- Unofficial guild
+	unofficialTag.Value = data.UnofficialGuildTag or ""
+end
+
+------------------------------------------------------------------------
+-- INITIALIZE GUILD DATA ON JOIN
+------------------------------------------------------------------------
+
+Players.PlayerAdded:Connect(function(player)
+	-- Wait for data to load
+	task.wait(1)
+	local data = DataManager.GetData(player)
+	if data then
+		UpdateGuildDisplay(player, data)
+	end
+end)
+
+------------------------------------------------------------------------
+-- GUILD ACTIONS
+------------------------------------------------------------------------
+
+GuildAction.OnServerEvent:Connect(function(player, action, ...)
+	local args = {...}
+
+	if action == "invite" then
+		local guildId = args[1]
+		local targetName = args[2]
+
+		if not CanManageGuild(player, guildId) then
+			SendResponse(player, "You don't have permission to invite.", false)
+			return
+		end
+
+		local guild = GuildConfig.GetGuildById(guildId)
+		if not guild then
+			SendResponse(player, "Invalid guild.", false)
+			return
+		end
+
+		-- Monarch is invite-only by admin
+		if guild.InviteOnly and not IsAdmin(player) then
+			SendResponse(player, "Only admins can invite to " .. guild.Name, false)
+			return
+		end
+
+		local target = FindPlayer(targetName)
+		if not target then
+			SendResponse(player, "Player not found: " .. targetName, false)
+			return
+		end
+
+		local targetData = DataManager.GetData(target)
+		if not targetData then
+			SendResponse(player, "No data for " .. target.Name, false)
+			return
+		end
+
+		if targetData.OfficialGuild ~= "" then
+			SendResponse(player, target.Name .. " is already in a guild.", false)
+			return
+		end
+
+		DataManager.SetMultiple(target, {
+			OfficialGuild = guildId,
+			OfficialGuildRank = "Member",
+		})
+
+		UpdateGuildDisplay(target, DataManager.GetData(target))
+		SendResponse(player, target.Name .. " has been invited to " .. guild.Name, true)
+
+	elseif action == "kick" then
+		local guildId = args[1]
+		local targetName = args[2]
+
+		if not CanManageGuild(player, guildId) then
+			SendResponse(player, "You don't have permission to kick.", false)
+			return
+		end
+
+		local target = FindPlayer(targetName)
+		if not target then
+			SendResponse(player, "Player not found: " .. targetName, false)
+			return
+		end
+
+		local targetData = DataManager.GetData(target)
+		if not targetData or targetData.OfficialGuild ~= guildId then
+			SendResponse(player, target.Name .. " is not in this guild.", false)
+			return
+		end
+
+		-- Can't kick the leader
+		if targetData.OfficialGuildRank == "Leader" then
+			SendResponse(player, "You can't kick the Leader.", false)
+			return
+		end
+
+		DataManager.SetMultiple(target, {
+			OfficialGuild = "",
+			OfficialGuildRank = "",
+		})
+
+		UpdateGuildDisplay(target, DataManager.GetData(target))
+		SendResponse(player, target.Name .. " has been kicked.", true)
+
+	elseif action == "promote" then
+		local guildId = args[1]
+		local targetName = args[2]
+
+		if not CanManageGuild(player, guildId) then
+			SendResponse(player, "You don't have permission to promote.", false)
+			return
+		end
+
+		local target = FindPlayer(targetName)
+		if not target then
+			SendResponse(player, "Player not found: " .. targetName, false)
+			return
+		end
+
+		local targetData = DataManager.GetData(target)
+		if not targetData or targetData.OfficialGuild ~= guildId then
+			SendResponse(player, target.Name .. " is not in this guild.", false)
+			return
+		end
+
+		local currentLevel = GuildConfig.GetRankLevel(targetData.OfficialGuildRank)
+		local nextRank = nil
+		for _, rank in ipairs(GuildConfig.Ranks) do
+			if rank.Level == currentLevel + 1 then
+				nextRank = rank.Name
+				break
+			end
+		end
+
+		if not nextRank or nextRank == "Leader" then
+			SendResponse(player, target.Name .. " can't be promoted further.", false)
+			return
+		end
+
+		DataManager.SetValue(target, "OfficialGuildRank", nextRank)
+		SendResponse(player, target.Name .. " promoted to " .. nextRank, true)
+
+	elseif action == "demote" then
+		local guildId = args[1]
+		local targetName = args[2]
+
+		if not CanManageGuild(player, guildId) then
+			SendResponse(player, "You don't have permission to demote.", false)
+			return
+		end
+
+		local target = FindPlayer(targetName)
+		if not target then
+			SendResponse(player, "Player not found: " .. targetName, false)
+			return
+		end
+
+		local targetData = DataManager.GetData(target)
+		if not targetData or targetData.OfficialGuild ~= guildId then
+			SendResponse(player, target.Name .. " is not in this guild.", false)
+			return
+		end
+
+		local currentLevel = GuildConfig.GetRankLevel(targetData.OfficialGuildRank)
+		if currentLevel <= 1 then
+			SendResponse(player, target.Name .. " is already the lowest rank.", false)
+			return
+		end
+
+		local prevRank = nil
+		for _, rank in ipairs(GuildConfig.Ranks) do
+			if rank.Level == currentLevel - 1 then
+				prevRank = rank.Name
+				break
+			end
+		end
+
+		if prevRank then
+			DataManager.SetValue(target, "OfficialGuildRank", prevRank)
+			SendResponse(player, target.Name .. " demoted to " .. prevRank, true)
+		end
+
+	elseif action == "leave" then
+		local data = DataManager.GetData(player)
+		if not data or data.OfficialGuild == "" then
+			SendResponse(player, "You're not in a guild.", false)
+			return
+		end
+
+		if data.OfficialGuildRank == "Leader" then
+			SendResponse(player, "Leaders can't leave. Transfer leadership first.", false)
+			return
+		end
+
+		DataManager.SetMultiple(player, {
+			OfficialGuild = "",
+			OfficialGuildRank = "",
+		})
+
+		UpdateGuildDisplay(player, DataManager.GetData(player))
+		SendResponse(player, "You left the guild.", true)
+	end
+end)
+
+------------------------------------------------------------------------
+-- GET GUILD MEMBERS (for guild panel)
+------------------------------------------------------------------------
+
+GetGuildMembers.OnServerInvoke = function(player, guildId)
+	local members = {}
+
+	for _, p in ipairs(Players:GetPlayers()) do
+		local data = DataManager.GetData(p)
+		if data and data.OfficialGuild == guildId then
+			local charName = p:FindFirstChild("CharacterDisplayName")
+			table.insert(members, {
+				Username = p.Name,
+				CharacterName = charName and charName.Value or p.Name,
+				Rank = data.OfficialGuildRank or "Member",
+				RankLevel = GuildConfig.GetRankLevel(data.OfficialGuildRank or "Member"),
+			})
+		end
+	end
+
+	-- Sort by rank level descending
+	table.sort(members, function(a, b) return a.RankLevel > b.RankLevel end)
+
+	return members
+end
+
+print("[GuildHandler] System initialized.")
+
+return GuildHandler
