@@ -1,0 +1,36 @@
+--[[
+    ServerInit (Script)
+    Boots up all server systems in the correct order.
+    This is a normal script. Everything else is a modulescript.
+]]
+
+local ServerScriptService = game:GetService("ServerScriptService")
+
+local DataManager = require(ServerScriptService:WaitForChild("DataManager"))
+print("[ServerInit] DataManager loaded.")
+
+local CharCreation = require(ServerScriptService:WaitForChild("CharacterCreationHandler"))
+print("[ServerInit] CharacterCreationHandler loaded.")
+
+local Overhead = require(ServerScriptService:WaitForChild("OverheadDisplay"))
+print("[ServerInit] OverheadDisplay loaded.")
+
+local SkillTree = require(ServerScriptService:WaitForChild("SkillTreeHandler"))
+print("[ServerInit] SkillTreeHandler loaded.")
+
+local Admin = require(ServerScriptService:WaitForChild("AdminHandler"))
+print("[ServerInit] AdminHandler loaded.")
+
+local Guilds = require(ServerScriptService:WaitForChild("GuildHandler"))
+print("[ServerInit] GuildHandler loaded.")
+
+local Combat = require(ServerScriptService:WaitForChild("CombatHandler"))
+print("[ServerInit] CombatHandler loaded.")
+
+local KO = require(ServerScriptService:WaitForChild("KOHandler"))
+print("[ServerInit] KOHandler loaded.")
+
+local Dummy = require(ServerScriptService:WaitForChild("DummyHandler"))
+print("[ServerInit] DummyHandler loaded.")
+
+print("[ServerInit] All systems online. PROJECT//:SYSTEM ready.")
