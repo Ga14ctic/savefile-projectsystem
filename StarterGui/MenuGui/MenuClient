@@ -1,0 +1,861 @@
+--[[
+    MenuClient (LocalScript)
+    
+    Press M → opens menu.
+    Skill Tree shows ALL 3 trees side by side as columns.
+    Moves listed under each column.
+    Click a move to equip it to your hotbar.
+    
+    Hotbar: 12 slots (1-9, 0, -, =) at the bottom of the screen.
+    Only for moves. No items.
+]]
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local SkillTreeConfig = require(ReplicatedStorage:WaitForChild("SkillTreeConfig"))
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+
+local SpendSkillPoint = Remotes:WaitForChild("SpendSkillPoint")
+local EquipMoveRemote = Remotes:WaitForChild("EquipMove")
+local GetSkillData = Remotes:WaitForChild("GetSkillData")
+
+local screenGui = script.Parent
+local menuOpen = false
+local skillTreeOpen = false
+local cachedData = nil
+
+-- Which slot we're assigning a move to (nil = not assigning)
+local assigningSlot = nil
+
+------------------------------------------------------------------------
+-- HELPERS
+------------------------------------------------------------------------
+
+local function Create(className, props)
+	local inst = Instance.new(className)
+	for k, v in pairs(props) do
+		inst[k] = v
+	end
+	return inst
+end
+
+local function AddCorner(parent, radius)
+	Create("UICorner", {CornerRadius = UDim.new(0, radius or 8), Parent = parent})
+end
+
+------------------------------------------------------------------------
+-- HOTBAR KEYS
+------------------------------------------------------------------------
+
+local HOTBAR_KEYS = {
+	{Key = Enum.KeyCode.One,        Display = "1",  Index = 1},
+	{Key = Enum.KeyCode.Two,        Display = "2",  Index = 2},
+	{Key = Enum.KeyCode.Three,      Display = "3",  Index = 3},
+	{Key = Enum.KeyCode.Four,       Display = "4",  Index = 4},
+	{Key = Enum.KeyCode.Five,       Display = "5",  Index = 5},
+	{Key = Enum.KeyCode.Six,        Display = "6",  Index = 6},
+	{Key = Enum.KeyCode.Seven,      Display = "7",  Index = 7},
+	{Key = Enum.KeyCode.Eight,      Display = "8",  Index = 8},
+	{Key = Enum.KeyCode.Nine,       Display = "9",  Index = 9},
+	{Key = Enum.KeyCode.Zero,       Display = "0",  Index = 10},
+	{Key = Enum.KeyCode.Minus,      Display = "-",  Index = 11},
+	{Key = Enum.KeyCode.Equals,     Display = "=",  Index = 12},
+}
+
+------------------------------------------------------------------------
+-- HOTBAR UI (bottom of screen)
+------------------------------------------------------------------------
+
+local hotbarFrame = Create("Frame", {
+	Name = "Hotbar",
+	Size = UDim2.new(0, 636, 0, 56),
+	Position = UDim2.new(0.5, -318, 1, -65),
+	BackgroundTransparency = 1,
+	Parent = screenGui,
+})
+
+local hotbarSlots = {}
+
+for i, keyInfo in ipairs(HOTBAR_KEYS) do
+	local slot = Create("Frame", {
+		Name = "Slot_" .. i,
+		Size = UDim2.new(0, 48, 0, 48),
+		Position = UDim2.new(0, (i - 1) * 53, 0, 0),
+		BackgroundColor3 = Color3.fromRGB(20, 20, 28),
+		BorderSizePixel = 0,
+		Parent = hotbarFrame,
+	})
+	AddCorner(slot, 6)
+
+	Create("UIStroke", {
+		Color = Color3.fromRGB(55, 55, 70),
+		Thickness = 1.5,
+		Parent = slot,
+	})
+
+	-- Key label (top-left corner)
+	Create("TextLabel", {
+		Name = "KeyLabel",
+		Size = UDim2.new(0, 16, 0, 14),
+		Position = UDim2.new(0, 3, 0, 2),
+		BackgroundTransparency = 1,
+		Text = keyInfo.Display,
+		TextColor3 = Color3.fromRGB(120, 120, 140),
+		TextSize = 10,
+		Font = Enum.Font.GothamBold,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = slot,
+	})
+
+	-- Move name (center)
+	local moveLabel = Create("TextLabel", {
+		Name = "MoveLabel",
+		Size = UDim2.new(1, -6, 0, 20),
+		Position = UDim2.new(0, 3, 0.5, -5),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		TextSize = 9,
+		Font = Enum.Font.GothamBold,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = slot,
+	})
+
+	-- Cooldown overlay (used later when moves are on cooldown)
+	local cooldownOverlay = Create("Frame", {
+		Name = "CooldownOverlay",
+		Size = UDim2.new(1, 0, 0, 0),
+		Position = UDim2.new(0, 0, 1, 0),
+		AnchorPoint = Vector2.new(0, 1),
+		BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+		BackgroundTransparency = 0.5,
+		Visible = false,
+		ZIndex = 2,
+		Parent = slot,
+	})
+	AddCorner(cooldownOverlay, 6)
+
+	-- Click to assign
+	local clickBtn = Create("TextButton", {
+		Name = "ClickBtn",
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+		ZIndex = 3,
+		Parent = slot,
+	})
+
+	clickBtn.MouseButton1Click:Connect(function()
+		if skillTreeOpen then
+			-- If skill tree is open, clicking a slot sets it as the target
+			assigningSlot = i
+			RefreshHotbarHighlight()
+		end
+	end)
+
+	hotbarSlots[i] = {
+		Frame = slot,
+		MoveLabel = moveLabel,
+		CooldownOverlay = cooldownOverlay,
+		MoveName = nil,
+	}
+end
+
+------------------------------------------------------------------------
+-- MOBILE HOTBAR ADJUSTMENTS
+------------------------------------------------------------------------
+
+local Platform = require(ReplicatedStorage:WaitForChild("Platform"))
+
+if Platform.IsMobile() then
+	-- Resize hotbar for mobile (smaller, centered)
+	hotbarFrame.Size = UDim2.new(0, 396, 0, 42)
+	hotbarFrame.Position = UDim2.new(0.5, -198, 1, -50)
+
+	for i, slotData in ipairs(hotbarSlots) do
+		-- Make slots smaller on mobile
+		slotData.Frame.Size = UDim2.new(0, 30, 0, 36)
+		slotData.Frame.Position = UDim2.new(0, (i - 1) * 33, 0, 0)
+
+		-- Hide key labels on mobile (no keyboard)
+		local keyLabel = slotData.Frame:FindFirstChild("KeyLabel")
+		if keyLabel then
+			keyLabel.Visible = false
+		end
+
+		-- Center the move label
+		slotData.MoveLabel.Position = UDim2.new(0, 2, 0.5, -8)
+		slotData.MoveLabel.Size = UDim2.new(1, -4, 0, 16)
+		slotData.MoveLabel.TextSize = 7
+	end
+end
+
+------------------------------------------------------------------------
+-- HOTBAR TAP/KEY ACTIVATION
+------------------------------------------------------------------------
+
+-- This fires when a player taps a hotbar slot (mobile) or presses a key (PC)
+-- The actual move execution will be handled by the combat system later
+local HotbarActivated = Instance.new("BindableEvent")
+HotbarActivated.Name = "HotbarActivated"
+HotbarActivated.Parent = ReplicatedStorage
+
+for i, slotData in ipairs(hotbarSlots) do
+	local clickBtn = slotData.Frame:FindFirstChild("ClickBtn")
+	if clickBtn then
+		clickBtn.MouseButton1Click:Connect(function()
+			-- Only activate if skill tree is NOT open (otherwise we're equipping)
+			if not skillTreeOpen and slotData.MoveName and slotData.MoveName ~= "" then
+				HotbarActivated:Fire(i, slotData.MoveName)
+				print("[Hotbar] Activated slot " .. i .. ": " .. slotData.MoveName)
+			end
+		end)
+	end
+end
+
+-- PC keyboard activation
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if skillTreeOpen or menuOpen then return end
+
+	for i, keyInfo in ipairs(HOTBAR_KEYS) do
+		if input.KeyCode == keyInfo.Key then
+			local slotData = hotbarSlots[i]
+			if slotData.MoveName and slotData.MoveName ~= "" then
+				HotbarActivated:Fire(i, slotData.MoveName)
+				print("[Hotbar] Activated slot " .. i .. ": " .. slotData.MoveName)
+			end
+			break
+		end
+	end
+end)
+
+------------------------------------------------------------------------
+-- HOTBAR REFRESH
+------------------------------------------------------------------------
+
+local function RefreshHotbar()
+	cachedData = GetSkillData:InvokeServer()
+	if not cachedData then return end
+
+	local equipped = cachedData.EquippedMoves or {}
+
+	for i = 1, 12 do
+		local slotData = hotbarSlots[i]
+		local moveName = equipped[tostring(i)] or ""
+		slotData.MoveName = moveName
+
+		if moveName ~= "" then
+			slotData.MoveLabel.Text = moveName
+			slotData.Frame.BackgroundColor3 = Color3.fromRGB(28, 28, 40)
+		else
+			slotData.MoveLabel.Text = ""
+			slotData.Frame.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
+		end
+	end
+end
+
+function RefreshHotbarHighlight()
+	for i, slotData in ipairs(hotbarSlots) do
+		local stroke = slotData.Frame:FindFirstChildOfClass("UIStroke")
+		if stroke then
+			if assigningSlot == i then
+				stroke.Color = Color3.fromRGB(255, 220, 60)
+				stroke.Thickness = 2
+			else
+				stroke.Color = Color3.fromRGB(55, 55, 70)
+				stroke.Thickness = 1.5
+			end
+		end
+	end
+end
+
+------------------------------------------------------------------------
+-- M MENU
+------------------------------------------------------------------------
+
+local menuFrame = Create("Frame", {
+	Name = "MenuFrame",
+	Size = UDim2.new(0, 180, 0, 0),
+	Position = UDim2.new(0.5, -90, 0.5, -100),
+	BackgroundColor3 = Color3.fromRGB(15, 15, 20),
+	AutomaticSize = Enum.AutomaticSize.Y,
+	Visible = false,
+	Parent = screenGui,
+})
+AddCorner(menuFrame, 8)
+Create("UIStroke", {
+	Color = Color3.fromRGB(50, 50, 65),
+	Thickness = 1.5,
+	Parent = menuFrame,
+})
+
+local menuLayout = Create("UIListLayout", {
+	SortOrder = Enum.SortOrder.LayoutOrder,
+	Padding = UDim.new(0, 0),
+	Parent = menuFrame,
+})
+
+-- Menu items
+local menuItems = {
+	{Name = "Skill Tree", LayoutOrder = 1, Enabled = true},
+	{Name = "Inventory",  LayoutOrder = 2, Enabled = false},
+	{Name = "Stats",      LayoutOrder = 3, Enabled = false},
+	{Name = "Settings",   LayoutOrder = 4, Enabled = false},
+}
+
+for _, item in ipairs(menuItems) do
+	local btn = Create("TextButton", {
+		Name = "Menu_" .. item.Name,
+		Size = UDim2.new(1, 0, 0, 38),
+		BackgroundTransparency = 1,
+		Text = item.Name,
+		TextColor3 = item.Enabled 
+			and Color3.fromRGB(220, 220, 230) 
+			or Color3.fromRGB(70, 70, 80),
+		TextSize = 15,
+		Font = Enum.Font.GothamBold,
+		LayoutOrder = item.LayoutOrder,
+		Parent = menuFrame,
+	})
+
+	-- Hover effect
+	if item.Enabled then
+		btn.MouseEnter:Connect(function()
+			btn.BackgroundTransparency = 0.85
+			btn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+		end)
+		btn.MouseLeave:Connect(function()
+			btn.BackgroundTransparency = 1
+		end)
+	end
+end
+
+------------------------------------------------------------------------
+-- SKILL TREE PANEL (all 3 trees side by side)
+------------------------------------------------------------------------
+
+local skillPanel = Create("Frame", {
+	Name = "SkillTreePanel",
+	Size = UDim2.new(0, 700, 0, 520),
+	Position = UDim2.new(0.5, -350, 0.5, -260),
+	BackgroundColor3 = Color3.fromRGB(14, 14, 20),
+	Visible = false,
+	Parent = screenGui,
+})
+AddCorner(skillPanel, 10)
+Create("UIStroke", {
+	Color = Color3.fromRGB(45, 45, 60),
+	Thickness = 1.5,
+	Parent = skillPanel,
+})
+
+-- Top bar (player info + points)
+local topBar = Create("Frame", {
+	Size = UDim2.new(1, -10, 0, 30),
+	Position = UDim2.new(0, 5, 0, 0),
+	BackgroundTransparency = 1,
+	Parent = skillPanel,
+})
+
+-- Get player display values
+local function GetPlayerInfo()
+	local charName = player:FindFirstChild("CharacterDisplayName")
+	local clan = player:FindFirstChild("ClanDisplay")
+	local clanRarity = player:FindFirstChild("ClanRarity")
+	local faction = player:FindFirstChild("FactionDisplay")
+	local leaderstats = player:FindFirstChild("leaderstats")
+
+	local rankVal = leaderstats and leaderstats:FindFirstChild("Rank")
+
+	return {
+		Name = charName and charName.Value or player.Name,
+		Clan = clan and clan.Value or "",
+		ClanRarity = clanRarity and clanRarity.Value or "Common",
+		Faction = faction and faction.Value or "None",
+		Rank = rankVal and rankVal.Value or "E",
+	}
+end
+
+local info = GetPlayerInfo()
+local PlayerDataConfig = require(ReplicatedStorage:WaitForChild("PlayerDataConfig"))
+
+-- Find faction color
+local factionColor = Color3.fromRGB(150, 150, 150)
+for _, fi in ipairs(PlayerDataConfig.Factions) do
+	if fi.Name == info.Faction then
+		factionColor = fi.Color
+		break
+	end
+end
+
+-- Name + Clan (left side)
+-- Name + Clan (left side) — ALL WHITE
+local nameText = info.Name
+if info.Clan ~= "" then
+	nameText = info.Name .. " " .. info.Clan
+end
+
+Create("TextLabel", {
+	Name = "PlayerName",
+	Size = UDim2.new(0, 200, 1, 0),
+	Position = UDim2.new(0, 10, 0, 0),
+	BackgroundTransparency = 1,
+	Text = nameText,
+	RichText = false,
+	TextColor3 = Color3.fromRGB(255, 255, 255),
+	TextSize = 14,
+	Font = Enum.Font.GothamBold,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = topBar,
+})
+
+-- Rank (middle-left)
+Create("TextLabel", {
+	Name = "RankLabel",
+	Size = UDim2.new(0, 70, 1, 0),
+	Position = UDim2.new(0, 220, 0, 0),
+	BackgroundTransparency = 1,
+	Text = "Rank " .. info.Rank,
+	TextColor3 = Color3.fromRGB(255, 220, 100),
+	TextSize = 13,
+	Font = Enum.Font.GothamBold,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = topBar,
+})
+
+-- Faction (middle)
+Create("TextLabel", {
+	Name = "FactionLabel",
+	Size = UDim2.new(0, 140, 1, 0),
+	Position = UDim2.new(0, 300, 0, 0),
+	BackgroundTransparency = 1,
+	Text = info.Faction,
+	TextColor3 = factionColor,
+	TextSize = 13,
+	Font = Enum.Font.GothamBold,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = topBar,
+})
+
+-- Separator dots between items
+Create("TextLabel", {
+	Size = UDim2.new(0, 10, 1, 0),
+	Position = UDim2.new(0, 210, 0, 0),
+	BackgroundTransparency = 1,
+	Text = "·",
+	TextColor3 = Color3.fromRGB(60, 60, 70),
+	TextSize = 16,
+	Font = Enum.Font.GothamBold,
+	Parent = topBar,
+})
+
+Create("TextLabel", {
+	Size = UDim2.new(0, 10, 1, 0),
+	Position = UDim2.new(0, 290, 0, 0),
+	BackgroundTransparency = 1,
+	Text = "·",
+	TextColor3 = Color3.fromRGB(60, 60, 70),
+	TextSize = 16,
+	Font = Enum.Font.GothamBold,
+	Parent = topBar,
+})
+
+-- Points display (right side)
+local pointsLabel = Create("TextLabel", {
+	Name = "PointsLabel",
+	Size = UDim2.new(0, 120, 1, 0),
+	Position = UDim2.new(1, -130, 0, 0),
+	BackgroundTransparency = 1,
+	Text = "Points: 0",
+	TextColor3 = Color3.fromRGB(255, 220, 80),
+	TextSize = 14,
+	Font = Enum.Font.GothamBold,
+	TextXAlignment = Enum.TextXAlignment.Right,
+	Parent = topBar,
+})
+
+-- Points display (top right, ABOVE the columns now)
+local pointsLabel = Create("TextLabel", {
+	Name = "PointsLabel",
+	Size = UDim2.new(0, 200, 1, 0),
+	Position = UDim2.new(1, -210, 0, 0),
+	BackgroundTransparency = 1,
+	Text = "Points: 0",
+	TextColor3 = Color3.fromRGB(255, 220, 80),
+	TextSize = 14,
+	Font = Enum.Font.GothamBold,
+	TextXAlignment = Enum.TextXAlignment.Right,
+	Parent = topBar,
+})
+
+-- Instruction text (bottom)
+local instructionLabel = Create("TextLabel", {
+	Name = "InstructionLabel",
+	Size = UDim2.new(1, 0, 0, 20),
+	Position = UDim2.new(0, 0, 1, -25),
+	BackgroundTransparency = 1,
+	Text = "Click a move to equip → then click a hotbar slot",
+	TextColor3 = Color3.fromRGB(80, 80, 90),
+	TextSize = 11,
+	Font = Enum.Font.Gotham,
+	Parent = skillPanel,
+})
+
+------------------------------------------------------------------------
+-- THREE COLUMNS (one per tree)
+------------------------------------------------------------------------
+
+local treeColumns = {}
+
+for i, tree in ipairs(SkillTreeConfig.Trees) do
+	local colWidth = 1 / #SkillTreeConfig.Trees
+
+	-- Column container
+	local column = Create("Frame", {
+		Name = "Column_" .. tree.Name,
+		Size = UDim2.new(colWidth, -10, 1, -60),
+		Position = UDim2.new(colWidth * (i - 1), 5, 0, 32),
+		BackgroundColor3 = Color3.fromRGB(18, 18, 26),
+		BackgroundTransparency = 0.3,
+		Parent = skillPanel,
+	})
+	AddCorner(column, 8)
+
+	-- Tree header (name + point count + spend button)
+	local header = Create("Frame", {
+		Size = UDim2.new(1, 0, 0, 50),
+		BackgroundColor3 = tree.Color,
+		BackgroundTransparency = 0.85,
+		Parent = column,
+	})
+	AddCorner(header, 8)
+
+	-- Fix bottom corners of header
+	Create("Frame", {
+		Size = UDim2.new(1, 0, 0, 10),
+		Position = UDim2.new(0, 0, 1, -10),
+		BackgroundColor3 = tree.Color,
+		BackgroundTransparency = 0.85,
+		BorderSizePixel = 0,
+		Parent = header,
+	})
+
+	-- Tree name
+	Create("TextLabel", {
+		Size = UDim2.new(1, -50, 0, 24),
+		Position = UDim2.new(0, 10, 0, 4),
+		BackgroundTransparency = 1,
+		Text = string.upper(tree.Name),
+		TextColor3 = tree.Color,
+		TextSize = 16,
+		Font = Enum.Font.GothamBold,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = header,
+	})
+
+	-- Points in this tree
+	local treePointsLabel = Create("TextLabel", {
+		Name = "TreePointsLabel",
+		Size = UDim2.new(1, -10, 0, 16),
+		Position = UDim2.new(0, 10, 0, 28),
+		BackgroundTransparency = 1,
+		Text = "0 pts",
+		TextColor3 = Color3.fromRGB(150, 150, 160),
+		TextSize = 11,
+		Font = Enum.Font.Gotham,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = header,
+	})
+
+	-- + button (spend point)
+	local addBtn = Create("TextButton", {
+		Name = "AddBtn",
+		Size = UDim2.new(0, 30, 0, 30),
+		Position = UDim2.new(1, -38, 0, 10),
+		BackgroundColor3 = tree.Color,
+		BackgroundTransparency = 0.4,
+		Text = "+",
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		TextSize = 20,
+		Font = Enum.Font.GothamBold,
+		Parent = header,
+	})
+	AddCorner(addBtn, 6)
+
+	addBtn.MouseButton1Click:Connect(function()
+		if not cachedData or (cachedData.SkillPoints or 0) <= 0 then return end
+		SpendSkillPoint:FireServer(tree.Name)
+		task.wait(0.2)
+		RefreshSkillTree()
+	end)
+
+	-- Scrolling move list
+	local moveList = Create("ScrollingFrame", {
+		Name = "MoveList",
+		Size = UDim2.new(1, -8, 1, -58),
+		Position = UDim2.new(0, 4, 0, 54),
+		BackgroundTransparency = 1,
+		ScrollBarThickness = 2,
+		ScrollBarImageColor3 = Color3.fromRGB(60, 60, 80),
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		BorderSizePixel = 0,
+		Parent = column,
+	})
+
+	local moveLayout = Create("UIListLayout", {
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Padding = UDim.new(0, 1),
+		Parent = moveList,
+	})
+
+	treeColumns[i] = {
+		Column = column,
+		Header = header,
+		TreePointsLabel = treePointsLabel,
+		AddBtn = addBtn,
+		MoveList = moveList,
+		MoveLayout = moveLayout,
+	}
+end
+
+------------------------------------------------------------------------
+-- REFRESH SKILL TREE
+------------------------------------------------------------------------
+
+-- Which move is selected for equipping
+local selectedMove = nil
+
+function RefreshSkillTree()
+	cachedData = GetSkillData:InvokeServer()
+	if not cachedData then return end
+
+	-- Update points display
+	pointsLabel.Text = "Points: " .. (cachedData.SkillPoints or 0)
+
+	local treeKeys = {"StrengthPoints", "DexterityPoints", "MasteryPoints"}
+
+	for i, tree in ipairs(SkillTreeConfig.Trees) do
+		local col = treeColumns[i]
+		local pointsInTree = cachedData[treeKeys[i]] or 0
+
+		-- Update header points
+		col.TreePointsLabel.Text = pointsInTree .. " pts"
+
+		-- Update + button visibility
+		if (cachedData.SkillPoints or 0) > 0 then
+			col.AddBtn.BackgroundTransparency = 0.4
+		else
+			col.AddBtn.BackgroundTransparency = 0.8
+		end
+
+		-- Clear old moves
+		for _, child in ipairs(col.MoveList:GetChildren()) do
+			if child:IsA("TextButton") then
+				child:Destroy()
+			end
+		end
+
+		-- Add moves
+		for moveIndex, move in ipairs(tree.Moves) do
+			local isUnlocked = pointsInTree >= move.PointsRequired
+
+			-- Check if equipped
+			local equippedSlot = nil
+			for slot, name in pairs(cachedData.EquippedMoves or {}) do
+				if name == move.Name then
+					equippedSlot = tonumber(slot)
+					break
+				end
+			end
+
+			local moveBtn = Create("TextButton", {
+				Name = "Move_" .. moveIndex,
+				Size = UDim2.new(1, 0, 0, 26),
+				BackgroundTransparency = 1,
+				Text = "",
+				LayoutOrder = moveIndex,
+				Parent = col.MoveList,
+			})
+
+			-- Move text with color coding
+			local displayText = move.Name
+			if not isUnlocked then
+				displayText = move.Name .. " - " .. move.PointsRequired
+			end
+
+			local textColor
+			if not isUnlocked then
+				textColor = Color3.fromRGB(80, 80, 90) -- greyed out
+			elseif equippedSlot then
+				textColor = Color3.fromRGB(255, 220, 80) -- gold = equipped
+			else
+				textColor = Color3.fromRGB(220, 220, 230) -- white = unlocked
+			end
+
+			Create("TextLabel", {
+				Size = UDim2.new(1, -10, 1, 0),
+				Position = UDim2.new(0, 8, 0, 0),
+				BackgroundTransparency = 1,
+				Text = displayText,
+				TextColor3 = textColor,
+				TextSize = 13,
+				Font = Enum.Font.Gotham,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				Parent = moveBtn,
+			})
+
+			-- Slot indicator if equipped
+			if equippedSlot then
+				Create("TextLabel", {
+					Size = UDim2.new(0, 20, 1, 0),
+					Position = UDim2.new(1, -25, 0, 0),
+					BackgroundTransparency = 1,
+					Text = tostring(HOTBAR_KEYS[equippedSlot].Display),
+					TextColor3 = Color3.fromRGB(255, 220, 80),
+					TextSize = 11,
+					Font = Enum.Font.GothamBold,
+					TextXAlignment = Enum.TextXAlignment.Right,
+					Parent = moveBtn,
+				})
+			end
+
+			-- Click behavior
+			if isUnlocked then
+				moveBtn.MouseButton1Click:Connect(function()
+					if equippedSlot then
+						-- Already equipped, unequip it
+						EquipMoveRemote:FireServer("", equippedSlot)
+						task.wait(0.2)
+						RefreshSkillTree()
+						RefreshHotbar()
+					else
+						-- Select this move, wait for slot click
+						selectedMove = move.Name
+						instructionLabel.Text = "Now click a hotbar slot for: " .. move.Name
+						instructionLabel.TextColor3 = Color3.fromRGB(255, 220, 80)
+					end
+				end)
+
+				-- Hover effect
+				moveBtn.MouseEnter:Connect(function()
+					moveBtn.BackgroundTransparency = 0.85
+					moveBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+				end)
+				moveBtn.MouseLeave:Connect(function()
+					moveBtn.BackgroundTransparency = 1
+				end)
+			end
+		end
+
+		-- Update canvas size
+		col.MoveList.CanvasSize = UDim2.new(0, 0, 0, col.MoveLayout.AbsoluteContentSize.Y + 10)
+	end
+
+	-- Also refresh hotbar
+	RefreshHotbar()
+end
+
+------------------------------------------------------------------------
+-- HOTBAR SLOT CLICK → EQUIP SELECTED MOVE
+------------------------------------------------------------------------
+
+for i, slotData in ipairs(hotbarSlots) do
+	local clickBtn = slotData.Frame:FindFirstChild("ClickBtn")
+	if clickBtn then
+		clickBtn.MouseButton1Click:Connect(function()
+			if selectedMove and skillTreeOpen then
+				EquipMoveRemote:FireServer(selectedMove, i)
+				selectedMove = nil
+				assigningSlot = nil
+				instructionLabel.Text = "Click a move to equip → then click a hotbar slot"
+				instructionLabel.TextColor3 = Color3.fromRGB(80, 80, 90)
+				RefreshHotbarHighlight()
+				task.wait(0.2)
+				RefreshSkillTree()
+			end
+		end)
+	end
+end
+
+------------------------------------------------------------------------
+-- MENU BUTTON CONNECTIONS
+------------------------------------------------------------------------
+
+local skillTreeBtn = menuFrame:FindFirstChild("Menu_Skill Tree")
+if skillTreeBtn then
+	skillTreeBtn.MouseButton1Click:Connect(function()
+		menuFrame.Visible = false
+		menuOpen = false
+		skillPanel.Visible = true
+		skillTreeOpen = true
+		selectedMove = nil
+		assigningSlot = nil
+		RefreshSkillTree()
+	end)
+end
+
+------------------------------------------------------------------------
+-- M KEY TOGGLE (keyboard + mobile)
+------------------------------------------------------------------------
+
+local Platform = require(ReplicatedStorage:WaitForChild("Platform"))
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+
+	if input.KeyCode == Enum.KeyCode.M then
+		if skillTreeOpen then
+			skillPanel.Visible = false
+			skillTreeOpen = false
+			selectedMove = nil
+			assigningSlot = nil
+			RefreshHotbarHighlight()
+		elseif menuOpen then
+			menuFrame.Visible = false
+			menuOpen = false
+		else
+			menuFrame.Visible = true
+			menuOpen = true
+		end
+	end
+end)
+
+-- Mobile support: listen for virtual menu toggle
+task.spawn(function()
+	local virtualInput = ReplicatedStorage:WaitForChild("VirtualInput", 5)
+	if virtualInput then
+		local menuToggle = virtualInput:WaitForChild("MenuToggle", 5)
+		if menuToggle then
+			menuToggle.Event:Connect(function()
+				if skillTreeOpen then
+					skillPanel.Visible = false
+					skillTreeOpen = false
+					selectedMove = nil
+					assigningSlot = nil
+					RefreshHotbarHighlight()
+				elseif menuOpen then
+					menuFrame.Visible = false
+					menuOpen = false
+				else
+					menuFrame.Visible = true
+					menuOpen = true
+				end
+			end)
+		end
+	end
+end)
+------------------------------------------------------------------------
+-- INITIAL HOTBAR LOAD
+------------------------------------------------------------------------
+
+task.spawn(function()
+	task.wait(2)
+	RefreshHotbar()
+end)
+
+print("[MenuClient] System initialized.")
