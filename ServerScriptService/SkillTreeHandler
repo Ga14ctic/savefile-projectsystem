@@ -1,0 +1,167 @@
+--[[
+    SkillTreeHandler (ModuleScript)
+    Validates and processes skill point spending.
+    Server-authoritative — client can't cheat.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+
+local SkillTreeConfig = require(ReplicatedStorage:WaitForChild("SkillTreeConfig"))
+local DataManager = require(ServerScriptService:WaitForChild("DataManager"))
+
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local SpendSkillPoint = Remotes:WaitForChild("SpendSkillPoint")
+local EquipMove = Remotes:WaitForChild("EquipMove")
+local GetSkillData = Remotes:WaitForChild("GetSkillData")
+
+local SkillTreeHandler = {}
+
+------------------------------------------------------------------------
+-- TREE NAME TO DATA KEY MAPPING
+------------------------------------------------------------------------
+
+local TreeToKey = {
+	Strength = "StrengthPoints",
+	Dexterity = "DexterityPoints",
+	Mastery = "MasteryPoints",
+}
+
+------------------------------------------------------------------------
+-- GET UNLOCKED MOVES FOR A PLAYER
+------------------------------------------------------------------------
+
+local function GetUnlockedMoves(data)
+	local unlocked = {}
+
+	for _, tree in ipairs(SkillTreeConfig.Trees) do
+		local pointsInTree = data[TreeToKey[tree.Name]] or 0
+
+		for _, move in ipairs(tree.Moves) do
+			if pointsInTree >= move.PointsRequired then
+				table.insert(unlocked, {
+					Name = move.Name,
+					Tree = tree.Name,
+					Cooldown = move.Cooldown,
+					Damage = move.Damage,
+					Description = move.Description,
+				})
+			end
+		end
+	end
+
+	return unlocked
+end
+
+------------------------------------------------------------------------
+-- SPEND SKILL POINT
+------------------------------------------------------------------------
+
+SpendSkillPoint.OnServerEvent:Connect(function(player, treeName)
+	local data = DataManager.GetData(player)
+	if not data then return end
+
+	-- Validate tree name
+	local dataKey = TreeToKey[treeName]
+	if not dataKey then
+		warn("[SkillTree] Invalid tree name from " .. player.Name .. ": " .. tostring(treeName))
+		return
+	end
+
+	-- Check if they have points to spend
+	if (data.SkillPoints or 0) <= 0 then
+		warn("[SkillTree] " .. player.Name .. " has no skill points to spend")
+		return
+	end
+
+	-- Check max points per tree
+	local currentPoints = data[dataKey] or 0
+	if currentPoints >= SkillTreeConfig.MaxPointsPerTree then
+		warn("[SkillTree] " .. player.Name .. " maxed out " .. treeName)
+		return
+	end
+
+	-- Spend the point
+	DataManager.SetMultiple(player, {
+		SkillPoints = data.SkillPoints - 1,
+		[dataKey] = currentPoints + 1,
+	})
+
+	print("[SkillTree] " .. player.Name .. " spent 1 point in " .. treeName
+		.. " (now " .. (currentPoints + 1) .. " points)")
+end)
+
+------------------------------------------------------------------------
+-- EQUIP MOVE TO SLOT
+------------------------------------------------------------------------
+
+EquipMove.OnServerEvent:Connect(function(player, moveName, slotIndex)
+	local data = DataManager.GetData(player)
+	if not data then return end
+
+	-- Validate slot index (1-4)
+	if type(slotIndex) ~= "number" or slotIndex < 1 or slotIndex > 12 then
+		warn("[SkillTree] Invalid slot index from " .. player.Name)
+		return
+	end
+	slotIndex = math.floor(slotIndex)
+
+	-- If moveName is empty/nil, they're unequipping
+	if not moveName or moveName == "" then
+		local equipped = data.EquippedMoves or {}
+		equipped[tostring(slotIndex)] = nil
+		DataManager.SetValue(player, "EquippedMoves", equipped)
+		print("[SkillTree] " .. player.Name .. " cleared slot " .. slotIndex)
+		return
+	end
+
+	-- Check if they actually have this move unlocked
+	local unlocked = GetUnlockedMoves(data)
+	local moveFound = false
+	for _, move in ipairs(unlocked) do
+		if move.Name == moveName then
+			moveFound = true
+			break
+		end
+	end
+
+	if not moveFound then
+		warn("[SkillTree] " .. player.Name .. " tried to equip locked move: " .. moveName)
+		return
+	end
+
+	-- Check the move isn't already equipped in another slot
+	local equipped = data.EquippedMoves or {}
+	for slot, name in pairs(equipped) do
+		if name == moveName and slot ~= tostring(slotIndex) then
+			equipped[slot] = nil -- remove from old slot
+		end
+	end
+
+	equipped[tostring(slotIndex)] = moveName
+	DataManager.SetValue(player, "EquippedMoves", equipped)
+	print("[SkillTree] " .. player.Name .. " equipped " .. moveName .. " in slot " .. slotIndex)
+end)
+
+------------------------------------------------------------------------
+-- CLIENT REQUESTS FULL SKILL DATA
+------------------------------------------------------------------------
+
+GetSkillData.OnServerInvoke = function(player)
+	local data = DataManager.GetData(player)
+	if not data then return nil end
+
+	return {
+		SkillPoints = data.SkillPoints or 0,
+		StrengthPoints = data.StrengthPoints or 0,
+		DexterityPoints = data.DexterityPoints or 0,
+		MasteryPoints = data.MasteryPoints or 0,
+		EquippedMoves = data.EquippedMoves or {},
+		UnlockedMoves = GetUnlockedMoves(data),
+	}
+end
+
+print("[SkillTreeHandler] System initialized.")
+
+return SkillTreeHandler
