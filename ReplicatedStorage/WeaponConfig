@@ -1,0 +1,527 @@
+--[[
+    WeaponConfig
+    All weapon definitions, damage values, timings, and move data.
+    
+    DESIGN RULES:
+    - Fights last ~2 minutes at equal skill
+    - Max HP is 240 at endgame
+    - No true combos — everything can be escaped/parried
+    - Rarity ≠ power. Skill > gear.
+    - Legendary = flashiest, NOT strongest.
+]]
+
+local WeaponConfig = {}
+
+------------------------------------------------------------------------
+-- COMBAT CONSTANTS
+------------------------------------------------------------------------
+
+WeaponConfig.Combat = {
+	-- M1 SYSTEM
+	M1ResetTime = 0.8,          -- Seconds of no clicking before combo resets
+	M1HitStun = 0.3,            -- How long target is stunned after being hit by M1
+	M1Cooldown = 0.05,          -- Minimum time between M1 swings (anti-spam)
+	M1Range = 8,                -- Studs
+
+	-- BLOCKING
+	BlockDamageReduction = 0.7, -- 70% damage reduction while blocking
+	BlockPushback = 10,         -- Studs pushed back when hit while blocking
+	GuardBreakStun = 1.0,       -- Stun duration when guard is broken
+
+	-- PARRYING
+	ParryWindow = 0.2,          -- Seconds — how long the parry window lasts after pressing block
+	ParryStun = 0.6,            -- How long the ATTACKER is stunned after being parried
+	ParrySound = true,          -- Play a satisfying parry sound
+
+	-- DODGING
+	DodgeDistance = 14,         -- Studs traveled during dodge
+	DodgeDuration = 0.25,      -- How long the dodge animation lasts
+	DodgeIFrames = 0.3,        -- Seconds of invincibility during dodge
+	DodgeCooldown = 1.5,       -- Seconds before you can dodge again
+
+	-- AIR CRIT (universal — same for ALL weapons)
+	AirCritDamage = 18,
+	AirCritCooldown = 18,
+	AirCritRange = 12,          -- Studs forward distance on the slam
+	AirCritAOE = 8,             -- Studs radius of the slam impact
+	AirCritStun = 0.5,          -- Stun on targets hit
+
+	-- UPTILT (universal)
+	UptiltDamage = 6,
+	UptiltCooldown = 4,
+	UptiltLaunchHeight = 8,     -- Studs the target goes up
+	UptiltRange = 7,
+
+	-- GENERAL
+	EndlagMultiplier = 1.0,     -- Global endlag multiplier (for future balancing)
+}
+
+------------------------------------------------------------------------
+-- WEAPON DEFINITIONS
+------------------------------------------------------------------------
+
+WeaponConfig.Weapons = {
+	---------------------------------------------------------------
+	-- IRON BLADE (Common) — The reliable all-rounder
+	---------------------------------------------------------------
+	{
+		Id = "iron_blade",
+		Name = "Iron Blade",
+		Rarity = "Common",
+		Description = "A well-forged blade. Nothing fancy, nothing wasted. The weapon of champions who need no gimmicks.",
+		DamageMultiplier = 1.0,
+
+		M1 = {
+			TotalHits = 4,
+			Damage = {5, 5, 5, 6},              -- Per hit damage
+			Timing = {0.0, 0.35, 0.35, 0.45},   -- Delay before each hit
+			Endlag = 0.5,                         -- Recovery after final hit
+			Animations = {"SlashR", "SlashL", "SlashR", "OverheadSlam"},
+			HitboxSize = Vector3.new(4, 4, 6),
+		},
+
+		Crit = {
+			Name = "Cleave",
+			Description = "A powerful overhead cleave. Simple. Devastating.",
+			Damage = 18,
+			Cooldown = 15,
+			Windup = 0.4,
+			Endlag = 0.6,
+			Range = 9,
+			HitboxSize = Vector3.new(5, 5, 7),
+			Stun = 0.4,
+			Animation = "OverheadCleave",
+			VFX = "SlashWave",
+		},
+
+		Z = {
+			Name = "Thrust",
+			Description = "Quick forward lunge stab. Fast, reliable gap closer.",
+			Damage = 12,
+			Cooldown = 6,
+			Windup = 0.15,
+			Endlag = 0.4,
+			DashDistance = 10,
+			Range = 9,
+			HitboxSize = Vector3.new(3, 3, 8),
+			Stun = 0.3,
+			Animation = "ThrustForward",
+			VFX = "ThrustTrail",
+		},
+
+		X = {
+			Name = "Sweep",
+			Description = "Wide horizontal slash. Hits everything in front of you.",
+			Damage = 14,
+			Cooldown = 8,
+			Windup = 0.25,
+			Endlag = 0.5,
+			Range = 8,
+			HitboxSize = Vector3.new(10, 4, 6),  -- Wide hitbox
+			Stun = 0.35,
+			Animation = "WideSweep",
+			VFX = "SweepArc",
+		},
+
+		C = {
+			Name = "Rising Slash",
+			Description = "Upward cut. Small launch, sets up pressure.",
+			Damage = 14,
+			Cooldown = 10,
+			Windup = 0.2,
+			Endlag = 0.55,
+			Range = 7,
+			HitboxSize = Vector3.new(4, 6, 5),
+			Stun = 0.3,
+			LaunchHeight = 6,
+			Animation = "RisingCut",
+			VFX = "UpwardSlash",
+		},
+	},
+
+	---------------------------------------------------------------
+	-- TWIN FANGS (Uncommon) — Death by a thousand cuts
+	---------------------------------------------------------------
+	{
+		Id = "twin_fangs",
+		Name = "Twin Fangs",
+		Rarity = "Uncommon",
+		Description = "Dual daggers forged from fang steel. Fast as lightning, sharp as malice.",
+		DamageMultiplier = 1.0,
+
+		M1 = {
+			TotalHits = 5,
+			Damage = {4, 4, 4, 4, 5},
+			Timing = {0.0, 0.25, 0.25, 0.25, 0.3},
+			Endlag = 0.4,
+			Animations = {"DaggerSlashR", "DaggerSlashL", "DaggerStabR", "DaggerStabL", "DaggerCross"},
+			HitboxSize = Vector3.new(3, 3, 5),
+		},
+
+		Crit = {
+			Name = "Cross Slash",
+			Description = "Both blades in an X pattern. Short dash forward on startup.",
+			Damage = 16,
+			Cooldown = 14,
+			Windup = 0.3,
+			Endlag = 0.5,
+			DashDistance = 8,
+			Range = 7,
+			HitboxSize = Vector3.new(5, 5, 6),
+			Stun = 0.4,
+			Animation = "CrossSlash",
+			VFX = "XSlash",
+		},
+
+		Z = {
+			Name = "Backstep",
+			Description = "Dodge backward and throw a dagger. Creates space.",
+			Damage = 10,
+			Cooldown = 5,
+			Windup = 0.1,
+			Endlag = 0.35,
+			DashDistance = -12,  -- Negative = backward
+			Range = 20,         -- Projectile range
+			HitboxSize = Vector3.new(2, 2, 2),
+			Stun = 0.2,
+			IsProjectile = true,
+			ProjectileSpeed = 80,
+			Animation = "BackstepThrow",
+			VFX = "DaggerProjectile",
+		},
+
+		X = {
+			Name = "Lacerate",
+			Description = "Rapid 3-hit slash combo. Inflicts bleed.",
+			Damage = 12,
+			Cooldown = 9,
+			Windup = 0.15,
+			Endlag = 0.5,
+			Range = 6,
+			HitboxSize = Vector3.new(4, 4, 5),
+			Stun = 0.25,
+			Bleed = {Damage = 2, Duration = 3, TickRate = 1}, -- 2 dmg per second for 3s = 6 extra
+			MultiHit = {4, 4, 4},
+			MultiTiming = {0.0, 0.15, 0.15},
+			Animation = "LacerateCombo",
+			VFX = "BleedSlash",
+		},
+
+		C = {
+			Name = "Shadow Pin",
+			Description = "Dash through enemy. Brief stun on hit.",
+			Damage = 14,
+			Cooldown = 10,
+			Windup = 0.2,
+			Endlag = 0.45,
+			DashDistance = 16,
+			Range = 10,
+			HitboxSize = Vector3.new(4, 4, 14),
+			Stun = 0.5,
+			Animation = "ShadowDash",
+			VFX = "ShadowTrail",
+		},
+	},
+
+	---------------------------------------------------------------
+	-- WARHAMMER (Rare) — Slow but devastating
+	---------------------------------------------------------------
+	{
+		Id = "warhammer",
+		Name = "Warhammer",
+		Rarity = "Rare",
+		Description = "A weapon of pure weight. Every swing is a commitment. Every hit is a statement.",
+		DamageMultiplier = 1.02,
+
+		M1 = {
+			TotalHits = 3,
+			Damage = {7, 7, 8},
+			Timing = {0.0, 0.5, 0.55},   -- Slow swings
+			Endlag = 0.7,                  -- Heavy recovery
+			Animations = {"HammerSwingR", "HammerSwingL", "HammerSlam"},
+			HitboxSize = Vector3.new(5, 5, 7),
+			GuardBreakOnFinal = true,      -- Last hit of M1 combo breaks block
+		},
+
+		Crit = {
+			Name = "Earthquake",
+			Description = "Slam hammer into the ground. AOE shockwave. LONG windup but massive payoff.",
+			Damage = 22,
+			Cooldown = 20,
+			Windup = 0.7,       -- Very long windup — easy to dodge, devastating if it lands
+			Endlag = 0.8,
+			Range = 6,
+			HitboxSize = Vector3.new(12, 4, 12),  -- AOE circle
+			Stun = 0.6,
+			IsAOE = true,
+			Animation = "EarthquakeSlam",
+			VFX = "GroundShatter",
+		},
+
+		Z = {
+			Name = "Shoulder Charge",
+			Description = "Rush forward. Knockback on hit. Guard breaks.",
+			Damage = 12,
+			Cooldown = 8,
+			Windup = 0.3,
+			Endlag = 0.6,
+			DashDistance = 14,
+			Range = 8,
+			HitboxSize = Vector3.new(5, 5, 6),
+			Stun = 0.4,
+			Knockback = 16,
+			GuardBreak = true,
+			Animation = "ShoulderCharge",
+			VFX = "ChargeImpact",
+		},
+
+		X = {
+			Name = "Overhead Crush",
+			Description = "Slow overhead swing. Breaks guard. Punishable if whiffed.",
+			Damage = 16,
+			Cooldown = 10,
+			Windup = 0.5,
+			Endlag = 0.7,
+			Range = 8,
+			HitboxSize = Vector3.new(5, 6, 6),
+			Stun = 0.5,
+			GuardBreak = true,
+			Animation = "OverheadCrush",
+			VFX = "CrushImpact",
+		},
+
+		C = {
+			Name = "Shockwave",
+			Description = "Slam ground, send a shockwave forward. Ranged poke.",
+			Damage = 14,
+			Cooldown = 12,
+			Windup = 0.4,
+			Endlag = 0.6,
+			Range = 20,
+			HitboxSize = Vector3.new(6, 3, 20),
+			Stun = 0.35,
+			IsProjectile = true,
+			ProjectileSpeed = 50,
+			Animation = "ShockwaveSlam",
+			VFX = "GroundWave",
+		},
+	},
+
+	---------------------------------------------------------------
+	-- PHANTOM EDGE (Epic) — Tricky and evasive
+	---------------------------------------------------------------
+	{
+		Id = "phantom_edge",
+		Name = "Phantom Edge",
+		Rarity = "Epic",
+		Description = "A blade that exists between realities. Its wielder is never where you think they are.",
+		DamageMultiplier = 1.03,
+
+		M1 = {
+			TotalHits = 4,
+			Damage = {5, 5, 5, 6},
+			Timing = {0.0, 0.35, 0.35, 0.4},
+			Endlag = 0.5,
+			Animations = {"PhantomSlash1", "PhantomSlash2", "PhantomTeleport", "PhantomFinish"},
+			HitboxSize = Vector3.new(4, 4, 6),
+			TeleportOnHit = 3,  -- On the 3rd hit, teleport behind target
+		},
+
+		Crit = {
+			Name = "Void Slash",
+			Description = "Disappear from reality. Reappear with a devastating slash.",
+			Damage = 20,
+			Cooldown = 18,
+			Windup = 0.5,       -- Disappear during windup (invulnerable)
+			Endlag = 0.6,
+			Range = 14,         -- Reappear near target
+			HitboxSize = Vector3.new(6, 6, 8),
+			Stun = 0.5,
+			InvulnDuringWindup = true,
+			Animation = "VoidSlash",
+			VFX = "VoidRift",
+		},
+
+		Z = {
+			Name = "Phase Dash",
+			Description = "Short teleport. Brief i-frames. Utility, no damage.",
+			Damage = 0,
+			Cooldown = 5,
+			Windup = 0.05,
+			Endlag = 0.2,
+			DashDistance = 14,
+			IFrames = 0.3,
+			Animation = "PhaseDash",
+			VFX = "PhaseTrail",
+		},
+
+		X = {
+			Name = "Mirage Strike",
+			Description = "Create an afterimage that attacks. You strike from the other side.",
+			Damage = 16,
+			Cooldown = 12,
+			Windup = 0.3,
+			Endlag = 0.5,
+			Range = 10,
+			HitboxSize = Vector3.new(5, 5, 7),
+			Stun = 0.4,
+			CreatesClone = true,
+			Animation = "MirageStrike",
+			VFX = "MirageAfterimage",
+		},
+
+		C = {
+			Name = "Rift Pull",
+			Description = "Pull enemy toward you. Sets up pressure.",
+			Damage = 10,
+			Cooldown = 10,
+			Windup = 0.25,
+			Endlag = 0.45,
+			Range = 18,
+			HitboxSize = Vector3.new(4, 4, 18),
+			Stun = 0.3,
+			PullDistance = 12,   -- Pulls target toward you
+			Animation = "RiftPull",
+			VFX = "RiftVortex",
+		},
+	},
+
+	---------------------------------------------------------------
+	-- RYUJIN (Legendary) — Lightning katana
+	---------------------------------------------------------------
+	{
+		Id = "ryujin",
+		Name = "Ryujin",
+		Rarity = "Legendary",
+		Description = "The blade of the Thunder God. Lightning courses through its edge. Not the strongest — but the most spectacular.",
+		DamageMultiplier = 1.05,
+
+		M1 = {
+			TotalHits = 4,
+			Damage = {5, 5, 5, 6},
+			Timing = {0.0, 0.35, 0.35, 0.45},
+			Endlag = 0.5,
+			Animations = {"KatanaSlash1", "KatanaSlash2", "KatanaSlash3", "KatanaLightningFinish"},
+			HitboxSize = Vector3.new(4, 4, 7),
+			VFXOnFinal = "LightningBurst",  -- Lightning VFX on 4th hit
+		},
+
+		Crit = {
+			Name = "Thunder God's Strike",
+			Description = "Sheathe stance. Draw slash with lightning. Moderate windup, devastating if it lands.",
+			Damage = 20,
+			Cooldown = 18,
+			Windup = 0.5,       -- Sheathe animation during windup
+			Endlag = 0.6,
+			DashDistance = 10,
+			Range = 10,
+			HitboxSize = Vector3.new(5, 5, 10),
+			Stun = 0.5,
+			Animation = "IaiSlash",
+			VFX = "LightningDrawSlash",
+		},
+
+		Z = {
+			Name = "Lightning Step",
+			Description = "Fast dash + slash. Leaves lightning trail.",
+			Damage = 14,
+			Cooldown = 7,
+			Windup = 0.15,
+			Endlag = 0.4,
+			DashDistance = 12,
+			Range = 9,
+			HitboxSize = Vector3.new(4, 4, 10),
+			Stun = 0.3,
+			Animation = "LightningDash",
+			VFX = "LightningTrail",
+		},
+
+		X = {
+			Name = "Storm Cutter",
+			Description = "Three rapid crescent projectiles. Ranged poke tool.",
+			Damage = 14,
+			Cooldown = 10,
+			Windup = 0.2,
+			Endlag = 0.5,
+			Range = 25,
+			HitboxSize = Vector3.new(4, 4, 4),
+			Stun = 0.2,
+			IsProjectile = true,
+			ProjectileSpeed = 60,
+			MultiHit = {5, 5, 4},
+			MultiTiming = {0.0, 0.15, 0.15},
+			Animation = "StormCutter",
+			VFX = "LightningCrescent",
+		},
+
+		C = {
+			Name = "Raijin's Wrath",
+			Description = "Stab sword into ground. Lightning strikes in a small radius.",
+			Damage = 16,
+			Cooldown = 14,
+			Windup = 0.35,
+			Endlag = 0.65,
+			Range = 6,
+			HitboxSize = Vector3.new(14, 6, 14),  -- AOE circle
+			Stun = 0.45,
+			IsAOE = true,
+			Animation = "RaijinSlam",
+			VFX = "LightningField",
+		},
+	},
+}
+
+------------------------------------------------------------------------
+-- LOOKUP HELPERS
+------------------------------------------------------------------------
+
+function WeaponConfig.GetWeaponById(id)
+	for _, weapon in ipairs(WeaponConfig.Weapons) do
+		if weapon.Id == id then
+			return weapon
+		end
+	end
+	return nil
+end
+
+function WeaponConfig.GetWeaponByName(name)
+	for _, weapon in ipairs(WeaponConfig.Weapons) do
+		if weapon.Name == name then
+			return weapon
+		end
+	end
+	return nil
+end
+
+------------------------------------------------------------------------
+-- DPS VALIDATION (for balancing reference)
+------------------------------------------------------------------------
+
+function WeaponConfig.CalculateDPS(weaponId)
+	local weapon = WeaponConfig.GetWeaponById(weaponId)
+	if not weapon then return 0 end
+
+	local m1 = weapon.M1
+	local totalM1Damage = 0
+	for _, dmg in ipairs(m1.Damage) do
+		totalM1Damage = totalM1Damage + dmg
+	end
+
+	local totalM1Time = 0
+	for _, t in ipairs(m1.Timing) do
+		totalM1Time = totalM1Time + t
+	end
+	totalM1Time = totalM1Time + m1.Endlag
+
+	local m1DPS = totalM1Damage / totalM1Time
+
+	return {
+		M1Total = totalM1Damage,
+		M1Time = totalM1Time,
+		M1DPS = math.floor(m1DPS * 10) / 10,
+		CritDamage = weapon.Crit.Damage,
+		CritCooldown = weapon.Crit.Cooldown,
+	}
+end
+
+return WeaponConfig
