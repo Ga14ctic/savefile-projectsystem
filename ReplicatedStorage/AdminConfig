@@ -1,0 +1,239 @@
+--[[
+    AdminConfig
+    Defines who has admin access and all available commands.
+]]
+
+local AdminConfig = {}
+
+-- USER IDS of people who can use the admin panel
+-- Add your Roblox UserId here. To find it:
+-- Go to your Roblox profile, the number in the URL is your UserId
+AdminConfig.Admins = {
+	-- REPLACE THIS with your actual UserId
+	-- Example: 123456789,
+}
+
+-- You can also use usernames as a backup (checked on join)
+AdminConfig.AdminUsernames = {
+	"bsbvuufqy", -- your username
+}
+
+------------------------------------------------------------------------
+-- COMMAND DEFINITIONS
+-- Each command has:
+--   Name: the command keyword
+--   Args: list of argument definitions
+--   Description: what it does
+--
+-- Arg types:
+--   "player"  → autocomplete with online player names
+--   "string"  → free text, with options for autocomplete
+--   "number"  → a number value
+--   "select"  → pick from a fixed list
+------------------------------------------------------------------------
+
+AdminConfig.Commands = {
+	{
+		Name = "clan",
+		Description = "Set a player's clan",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "clan", Type = "string", Options = {
+				"Park", "Kim", "Lee", "Jung", "Choi", "Han", "Yoon", "Kang", "Shin", "Oh",
+				"Baek", "Hwang", "Song", "Ahn", "Noh", "Yoo", "Seo", "Moon", "Tak",
+				"Cha", "Go", "Woo", "Jin", "Lim", "Jegal", "Dokgo",
+				"Sung", "Cheon", "Ashborn", "Kamish",
+				"Monarch", "Ruler",
+			}},
+		},
+	},
+	{
+		Name = "clanrarity",
+		Description = "Set a player's clan rarity",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "rarity", Type = "select", Options = {
+				"Common", "Uncommon", "Rare", "Epic", "Legendary",
+			}},
+		},
+	},
+	{
+		Name = "rank",
+		Description = "Set a player's rank",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "rank", Type = "select", Options = {
+				"E", "D", "C", "B", "A", "S",
+			}},
+		},
+	},
+	{
+		Name = "points",
+		Description = "Set a player's skill points",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "amount", Type = "number"},
+		},
+	},
+	{
+		Name = "exp",
+		Description = "Set a player's EXP",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "amount", Type = "number"},
+		},
+	},
+	{
+		Name = "gold",
+		Description = "Set a player's gold",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "amount", Type = "number"},
+		},
+	},
+	{
+		Name = "faction",
+		Description = "Set a player's faction",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "faction", Type = "select", Options = {
+				"Hunters Guild", "Shadow Legion", "Red Gate",
+			}},
+		},
+	},
+	{
+		Name = "name",
+		Description = "Set a player's character name",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "newname", Type = "string"},
+		},
+	},
+	{
+		Name = "strength",
+		Description = "Set a player's Strength tree points",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "amount", Type = "number"},
+		},
+	},
+	{
+		Name = "dexterity",
+		Description = "Set a player's Dexterity tree points",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "amount", Type = "number"},
+		},
+	},
+	{
+		Name = "mastery",
+		Description = "Set a player's Mastery tree points",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "amount", Type = "number"},
+		},
+	},
+	{
+		Name = "kills",
+		Description = "Set a player's kill count",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "amount", Type = "number"},
+		},
+	},
+	{
+		Name = "reset",
+		Description = "Reset a player's skill points (refund all tree points)",
+		Args = {
+			{Name = "player", Type = "player"},
+		},
+	},
+	{
+		Name = "help",
+		Description = "Show all available commands",
+		Args = {},
+	},
+	{
+		Name = "guild",
+		Description = "Set a player's official guild",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "guild", Type = "select", Options = {
+				"hunters", "fame", "fiend", "knights", "monarch", "",
+			}},
+		},
+	},
+	{
+		Name = "guildrank",
+		Description = "Set a player's rank within their guild",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "rank", Type = "select", Options = {
+				"Member", "Veteran", "Officer", "Co-Leader", "Leader",
+			}},
+		},
+	},
+	{
+		Name = "unofficialguild",
+		Description = "Set a player's unofficial guild name",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "guildname", Type = "string"},
+		},
+	},
+	{
+		Name = "unofficialtag",
+		Description = "Set a player's unofficial guild tag",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "tag", Type = "string"},
+		},
+	},
+	{
+		Name = "weapon",
+		Description = "Set a player's equipped weapon",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "weapon", Type = "select", Options = {
+				"iron_blade", "twin_fangs", "warhammer", "phantom_edge", "ryujin",
+			}},
+		},
+	},
+	{
+		Name = "giveweapon",
+		Description = "Give a player a weapon (adds to owned list)",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "weapon", Type = "select", Options = {
+				"iron_blade", "twin_fangs", "warhammer", "phantom_edge", "ryujin",
+			}},
+		},
+	},
+	{
+		Name = "hp",
+		Description = "Set a player's current health",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "amount", Type = "number"},
+		},
+	},
+	{
+		Name = "maxhp",
+		Description = "Set a player's max health",
+		Args = {
+			{Name = "player", Type = "player"},
+			{Name = "amount", Type = "number"},
+		},
+	},
+	{
+		Name = "dummy",
+		Description = "Manage test dummies (spawn/remove/reset)",
+		Args = {
+			{Name = "action", Type = "select", Options = {
+				"spawn", "remove", "reset",
+			}},
+		},
+	},
+}
+
+return AdminConfig
