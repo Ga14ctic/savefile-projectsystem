@@ -1,0 +1,228 @@
+--[[
+    CharacterCreationHandler (ModuleScript)
+    Handles character creation + R6 gender body.
+    
+    NO HumanoidDescription — we do everything manually
+    so we don't break R6 or mess up body colors.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+
+local PlayerDataConfig = require(ReplicatedStorage:WaitForChild("PlayerDataConfig"))
+local DataManager = require(ServerScriptService:WaitForChild("DataManager"))
+
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local RequestCreation = Remotes:WaitForChild("RequestCharacterCreation")
+local RollClanRemote = Remotes:WaitForChild("RollClan")
+
+local CharacterCreationHandler = {}
+
+------------------------------------------------------------------------
+-- CLAN ROLLING
+------------------------------------------------------------------------
+
+local function RollRarity()
+	local roll = math.random(1, 100)
+	local cumulative = 0
+
+	for _, entry in ipairs(PlayerDataConfig.ClanRarityChances) do
+		cumulative = cumulative + entry.Chance
+		if roll <= cumulative then
+			return entry.Rarity
+		end
+	end
+
+	return "Common"
+end
+
+local function RollClan()
+	local rarity = RollRarity()
+	local clanList = PlayerDataConfig.Clans[rarity]
+	local clan = clanList[math.random(1, #clanList)]
+	return clan, rarity
+end
+
+------------------------------------------------------------------------
+-- NAME VALIDATION
+------------------------------------------------------------------------
+
+local function ValidateName(name)
+	if type(name) ~= "string" then
+		return false, "Invalid name"
+	end
+
+	name = name:match("^%s*(.-)%s*$")
+
+	if #name < 3 then
+		return false, "Name must be at least 3 characters"
+	end
+	if #name > 16 then
+		return false, "Name must be 16 characters or less"
+	end
+	if not name:match("^[A-Za-z ]+$") then
+		return false, "Name can only contain letters and spaces"
+	end
+	if name:find("  ") then
+		return false, "No double spaces allowed"
+	end
+
+	return true, name
+end
+
+------------------------------------------------------------------------
+-- R6 GENDER BODY SETUP
+-- Pure manual approach. No HumanoidDescription. No breakage.
+------------------------------------------------------------------------
+
+local GIRL_TORSO_MESH_ID = 248265331
+
+local function ForceBlockyR6(player, gender)
+	local character = player.Character
+	if not character then return end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return end
+
+	-- Step 1: Go through each body part and remove any mesh overrides
+	-- that make limbs look slim/custom. In R6, slim bodies come from
+	-- SpecialMesh instances inside the body parts or CharacterMesh children.
+
+	-- Remove all CharacterMesh instances (body shape packages)
+	for _, child in ipairs(character:GetChildren()) do
+		if child:IsA("CharacterMesh") then
+			child:Destroy()
+		end
+	end
+
+	-- Reset any SpecialMesh on limbs back to defaults
+	-- R6 parts: Head, Torso, Left Arm, Right Arm, Left Leg, Right Leg
+	local limbs = {"Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"}
+	for _, limbName in ipairs(limbs) do
+		local limb = character:FindFirstChild(limbName)
+		if limb then
+			-- Remove any SpecialMesh that was added by packages
+			for _, child in ipairs(limb:GetChildren()) do
+				if child:IsA("SpecialMesh") then
+					child:Destroy()
+				end
+			end
+		end
+	end
+
+	-- Head should keep its default R6 mesh (the sphere-ish shape)
+	-- Don't touch it
+
+	-- Step 2: Apply girl torso if female
+	if gender == "Female" then
+		local charMesh = Instance.new("CharacterMesh")
+		charMesh.BodyPart = Enum.BodyPart.Torso
+		charMesh.MeshId = GIRL_TORSO_MESH_ID
+		charMesh.Parent = character
+		print("[CharCreation] Applied blocky female R6 to " .. player.Name)
+	else
+		print("[CharCreation] Applied blocky male R6 to " .. player.Name)
+	end
+end
+
+------------------------------------------------------------------------
+-- REMOTE HANDLERS
+------------------------------------------------------------------------
+
+RollClanRemote.OnServerInvoke = function(player)
+	local clan, rarity = RollClan()
+	return clan, rarity
+end
+
+RequestCreation.OnServerEvent:Connect(function(player, characterName, gender, faction)
+	local data = DataManager.GetData(player)
+
+	if not data then
+		warn("[CharCreation] No data found for " .. player.Name)
+		return
+	end
+
+	if data.CharacterCreated then
+		warn("[CharCreation] " .. player.Name .. " already created their character")
+		return
+	end
+
+	local nameValid, nameResult = ValidateName(characterName)
+	if not nameValid then
+		warn("[CharCreation] Invalid name from " .. player.Name .. ": " .. nameResult)
+		return
+	end
+
+	if gender ~= "Male" and gender ~= "Female" then
+		warn("[CharCreation] Invalid gender from " .. player.Name)
+		return
+	end
+
+	local factionValid = false
+	for _, factionInfo in ipairs(PlayerDataConfig.Factions) do
+		if factionInfo.Name == faction then
+			factionValid = true
+			break
+		end
+	end
+	if not factionValid then
+		warn("[CharCreation] Invalid faction from " .. player.Name)
+		return
+	end
+
+	local clan, clanRarity = RollClan()
+
+	DataManager.SetMultiple(player, {
+		CharacterName = nameResult,
+		Gender = gender,
+		Faction = faction,
+		Clan = clan,
+		ClanRarity = clanRarity,
+		CharacterCreated = true,
+		FirstJoin = false,
+	})
+
+	ForceBlockyR6(player, gender)
+
+	print("[CharCreation] " .. player.Name .. " created character: "
+		.. nameResult .. " | " .. gender .. " | " .. faction
+		.. " | Clan: " .. clan .. " (" .. clanRarity .. ")")
+end)
+
+------------------------------------------------------------------------
+-- RE-APPLY ON EVERY SPAWN
+------------------------------------------------------------------------
+
+Players.PlayerAdded:Connect(function(player)
+	player.CharacterAdded:Connect(function(character)
+		-- Wait for Roblox to FULLY load the avatar
+		-- We need to wait until the character is fully assembled
+		if not character:IsDescendantOf(workspace) then
+			character.AncestryChanged:Wait()
+		end
+
+		local humanoid = character:WaitForChild("Humanoid", 10)
+		if not humanoid then return end
+
+		-- Wait for appearance to fully load
+		-- This is the key — we wait until Roblox is DONE loading their avatar
+		if not player:HasAppearanceLoaded() then
+			player.CharacterAppearanceLoaded:Wait()
+		end
+
+		-- Small extra buffer just to be safe
+		task.wait(0.2)
+
+		local data = DataManager.GetData(player)
+		if data and data.CharacterCreated and data.Gender ~= "" then
+			ForceBlockyR6(player, data.Gender)
+		else
+			ForceBlockyR6(player, "Male")
+		end
+	end)
+end)
+
+print("[CharacterCreationHandler] System initialized.")
+
+return CharacterCreationHandler
