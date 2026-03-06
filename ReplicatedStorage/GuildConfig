@@ -1,0 +1,119 @@
+--[[
+    GuildConfig
+    Defines official guilds, their colors, titles, and hierarchy ranks.
+    Also defines the data structure for unofficial guilds.
+]]
+
+local GuildConfig = {}
+
+------------------------------------------------------------------------
+-- OFFICIAL GUILDS
+------------------------------------------------------------------------
+
+GuildConfig.OfficialGuilds = {
+	{
+		Id = "hunters",
+		Name = "Hunters Guild",
+		Title = "Hunter",
+		Color = Color3.fromRGB(60, 140, 255),        -- Blue
+		Gradient = false,
+	},
+	{
+		Id = "fame",
+		Name = "Fame Guild",
+		Title = "Fame",
+		Color = Color3.fromRGB(240, 160, 40),         -- Orange
+		Gradient = false,
+	},
+	{
+		Id = "fiend",
+		Name = "Fiend Guild",
+		Title = "Fiend",
+		Color = Color3.fromRGB(220, 50, 50),           -- Red
+		Gradient = false,
+	},
+	{
+		Id = "knights",
+		Name = "Knights Guild",
+		Title = "Knight",
+		Color = Color3.fromRGB(160, 70, 220),          -- Purple
+		Gradient = false,
+	},
+	{
+		Id = "monarch",
+		Name = "Monarch Guild",
+		Title = "Monarch",
+		Color = Color3.fromRGB(180, 60, 220),          -- Purple (gradient start)
+		GradientEnd = Color3.fromRGB(240, 100, 180),   -- Pink (gradient end)
+		Gradient = true,
+		TitleColor = Color3.fromRGB(0, 0, 0),          -- Black title text
+		InviteOnly = true,                              -- Staff only
+	},
+}
+
+------------------------------------------------------------------------
+-- GUILD HIERARCHY RANKS (same for all official guilds)
+------------------------------------------------------------------------
+
+GuildConfig.Ranks = {
+	{Name = "Member",     Level = 1},
+	{Name = "Veteran",    Level = 2},
+	{Name = "Officer",    Level = 3},
+	{Name = "Co-Leader",  Level = 4},
+	{Name = "Leader",     Level = 5},
+}
+
+-- What each guild rank can do
+GuildConfig.Permissions = {
+	Member    = {},
+	Veteran   = {},
+	Officer   = {canInvite = true, canKick = true},
+	["Co-Leader"] = {canInvite = true, canKick = true, canPromote = true},
+	Leader    = {canInvite = true, canKick = true, canPromote = true, canDemote = true, canDisband = false},
+}
+
+------------------------------------------------------------------------
+-- GUILD LOOKUP HELPERS
+------------------------------------------------------------------------
+
+function GuildConfig.GetGuildById(id)
+	for _, guild in ipairs(GuildConfig.OfficialGuilds) do
+		if guild.Id == id then
+			return guild
+		end
+	end
+	return nil
+end
+
+function GuildConfig.GetGuildByName(name)
+	for _, guild in ipairs(GuildConfig.OfficialGuilds) do
+		if guild.Name == name then
+			return guild
+		end
+	end
+	return nil
+end
+
+function GuildConfig.GetRankLevel(rankName)
+	for _, rank in ipairs(GuildConfig.Ranks) do
+		if rank.Name == rankName then
+			return rank.Level
+		end
+	end
+	return 0
+end
+
+------------------------------------------------------------------------
+-- UNOFFICIAL GUILD DEFAULTS (player-created, data only for now)
+------------------------------------------------------------------------
+
+GuildConfig.UnofficialDefaults = {
+	Name = "",
+	Tag = "",             -- Short tag shown in brackets [TAG]
+	LeaderUserId = 0,
+	Members = {},         -- {UserId = {Rank = "Member", JoinedAt = timestamp}}
+	MaxMembers = 20,
+	CreatedAt = 0,
+}
+
+return GuildConfig
