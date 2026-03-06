@@ -1,0 +1,314 @@
+--[[
+    LeaderboardClient (LocalScript)
+    TAB toggle leaderboard.
+    
+    Shows:
+        Sylphie Monarch          ← name + clan (white)
+        Hunter                   ← official guild title (guild color)
+        [DRAGONS]                ← unofficial guild tag (yellow in white brackets)
+    
+    Hover shows @username.
+]]
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui = game:GetService("StarterGui")
+
+local player = Players.LocalPlayer
+
+local screenGui = script.Parent
+
+StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
+
+------------------------------------------------------------------------
+-- HELPERS
+------------------------------------------------------------------------
+
+local function Create(className, properties)
+	local instance = Instance.new(className)
+	for prop, value in pairs(properties) do
+		instance[prop] = value
+	end
+	return instance
+end
+
+------------------------------------------------------------------------
+-- TOOLTIP
+------------------------------------------------------------------------
+
+local tooltip = Create("TextLabel", {
+	Name = "Tooltip",
+	Size = UDim2.new(0, 0, 0, 22),
+	AutomaticSize = Enum.AutomaticSize.X,
+	BackgroundColor3 = Color3.fromRGB(20, 20, 28),
+	BackgroundTransparency = 0.1,
+	Text = "",
+	TextColor3 = Color3.fromRGB(160, 160, 170),
+	TextSize = 12,
+	Font = Enum.Font.Gotham,
+	Visible = false,
+	ZIndex = 10,
+	Parent = screenGui,
+})
+
+Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = tooltip})
+Create("UIPadding", {PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8), Parent = tooltip})
+Create("UIStroke", {Color = Color3.fromRGB(50, 50, 65), Thickness = 1, Parent = tooltip})
+
+------------------------------------------------------------------------
+-- CONTAINER
+------------------------------------------------------------------------
+
+local container = Create("Frame", {
+	Name = "LeaderboardContainer",
+	Size = UDim2.new(0, 280, 0, 0),
+	Position = UDim2.new(1, -290, 0, 10),
+	BackgroundTransparency = 1,
+	AutomaticSize = Enum.AutomaticSize.Y,
+	Visible = false,
+	Parent = screenGui,
+})
+
+Create("UIPadding", {
+	PaddingTop = UDim.new(0, 5),
+	PaddingBottom = UDim.new(0, 5),
+	PaddingRight = UDim.new(0, 10),
+	Parent = container,
+})
+
+Create("UIListLayout", {
+	SortOrder = Enum.SortOrder.Name,
+	Padding = UDim.new(0, 2),
+	HorizontalAlignment = Enum.HorizontalAlignment.Right,
+	Parent = container,
+})
+
+------------------------------------------------------------------------
+-- CREATE PLAYER ENTRY
+------------------------------------------------------------------------
+
+local function CreatePlayerEntry(targetPlayer)
+	local charNameVal = targetPlayer:FindFirstChild("CharacterDisplayName")
+	local clanVal = targetPlayer:FindFirstChild("ClanDisplay")
+	local guildTitleVal = targetPlayer:FindFirstChild("GuildTitle")
+	local guildColorR = targetPlayer:FindFirstChild("GuildColorR")
+	local guildColorG = targetPlayer:FindFirstChild("GuildColorG")
+	local guildColorB = targetPlayer:FindFirstChild("GuildColorB")
+	local guildGradient = targetPlayer:FindFirstChild("GuildGradient")
+	local guildGradEndR = targetPlayer:FindFirstChild("GuildGradEndR")
+	local guildGradEndG = targetPlayer:FindFirstChild("GuildGradEndG")
+	local guildGradEndB = targetPlayer:FindFirstChild("GuildGradEndB")
+	local guildTitleColor = targetPlayer:FindFirstChild("GuildTitleColor")
+	local unofficialTag = targetPlayer:FindFirstChild("UnofficialGuildTag")
+
+	local displayName = charNameVal and charNameVal.Value or targetPlayer.Name
+	local clan = clanVal and clanVal.Value or ""
+	local guildTitle = guildTitleVal and guildTitleVal.Value or ""
+	local uTag = unofficialTag and unofficialTag.Value or ""
+
+	-- Calculate entry height based on what's shown
+	local entryHeight = 22 -- base name line
+	if guildTitle ~= "" then entryHeight = entryHeight + 16 end
+	if uTag ~= "" then entryHeight = entryHeight + 14 end
+
+	-- Container frame for this player
+	local entry = Create("Frame", {
+		Name = targetPlayer.Name,
+		Size = UDim2.new(1, 0, 0, entryHeight),
+		BackgroundTransparency = 1,
+		Parent = container,
+	})
+
+	-- Invisible button for hover
+	local hoverBtn = Create("TextButton", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+		ZIndex = 3,
+		Parent = entry,
+	})
+
+	hoverBtn.MouseEnter:Connect(function()
+		tooltip.Text = "@" .. targetPlayer.Name
+		tooltip.Visible = true
+	end)
+	hoverBtn.MouseMoved:Connect(function(x, y)
+		tooltip.Position = UDim2.new(0, x - 10, 0, y - 28)
+	end)
+	hoverBtn.MouseLeave:Connect(function()
+		tooltip.Visible = false
+	end)
+
+	-- Line 1: Name + Clan (white)
+	local nameText = displayName
+	if clan ~= "" then
+		nameText = displayName .. " " .. clan
+	end
+
+	Create("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 22),
+		Position = UDim2.new(0, 0, 0, 0),
+		BackgroundTransparency = 1,
+		Text = nameText,
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+		TextStrokeTransparency = 0.4,
+		TextSize = 15,
+		Font = Enum.Font.GothamBold,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Parent = entry,
+	})
+
+	-- Line 2: Official guild title (colored)
+	local yOffset = 22
+	if guildTitle ~= "" then
+		local titleColorR = guildColorR and guildColorR.Value or 255
+		local titleColorG = guildColorG and guildColorG.Value or 255
+		local titleColorB = guildColorB and guildColorB.Value or 255
+		local isGradient = guildGradient and guildGradient.Value or false
+
+		-- Check for custom title text color (Monarch has black title)
+		local textColor = Color3.fromRGB(titleColorR, titleColorG, titleColorB)
+		if guildTitleColor and guildTitleColor.Value ~= "" then
+			local parts = string.split(guildTitleColor.Value, ",")
+			if #parts == 3 then
+				textColor = Color3.fromRGB(tonumber(parts[1]) or 0, tonumber(parts[2]) or 0, tonumber(parts[3]) or 0)
+			end
+		end
+
+		local titleLabel = Create("TextLabel", {
+			Name = "GuildTitleLabel",
+			Size = UDim2.new(1, 0, 0, 16),
+			Position = UDim2.new(0, 0, 0, yOffset),
+			BackgroundTransparency = 1,
+			Text = guildTitle,
+			TextColor3 = textColor,
+			TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+			TextStrokeTransparency = 0.5,
+			TextSize = 12,
+			Font = Enum.Font.GothamBold,
+			TextXAlignment = Enum.TextXAlignment.Right,
+			Parent = entry,
+		})
+
+		-- Add gradient for Monarch guild
+		if isGradient then
+			local gradEndR = guildGradEndR and guildGradEndR.Value or 255
+			local gradEndG = guildGradEndG and guildGradEndG.Value or 255
+			local gradEndB = guildGradEndB and guildGradEndB.Value or 255
+
+			local gradient = Create("UIGradient", {
+				Color = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(titleColorR, titleColorG, titleColorB)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(gradEndR, gradEndG, gradEndB)),
+				}),
+				Parent = titleLabel,
+			})
+
+			-- For Monarch: the title text itself should be the gradient
+			-- Override the text color to white so gradient shows through
+			titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+
+			-- But the GuildTitleColor says black — that's the TEXT on overhead
+			-- On leaderboard, gradient looks better on the title text itself
+		end
+
+		yOffset = yOffset + 16
+	end
+
+	-- Line 3: Unofficial guild tag (yellow in white brackets)
+	if uTag ~= "" then
+		Create("TextLabel", {
+			Name = "UnofficialTag",
+			Size = UDim2.new(1, 0, 0, 14),
+			Position = UDim2.new(0, 0, 0, yOffset),
+			BackgroundTransparency = 1,
+			RichText = true,
+			Text = '<font color="#FFFFFF">[</font><font color="#FFD940">' .. uTag .. '</font><font color="#FFFFFF">]</font>',
+			TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+			TextStrokeTransparency = 0.5,
+			TextSize = 11,
+			Font = Enum.Font.Gotham,
+			TextXAlignment = Enum.TextXAlignment.Right,
+			Parent = entry,
+		})
+	end
+
+	return entry
+end
+
+------------------------------------------------------------------------
+-- REFRESH
+------------------------------------------------------------------------
+
+local function RefreshLeaderboard()
+	for _, child in ipairs(container:GetChildren()) do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+
+	for _, targetPlayer in ipairs(Players:GetPlayers()) do
+		CreatePlayerEntry(targetPlayer)
+	end
+end
+
+------------------------------------------------------------------------
+-- TAB TOGGLE (keyboard + mobile)
+------------------------------------------------------------------------
+
+local Platform = require(ReplicatedStorage:WaitForChild("Platform"))
+local isVisible = false
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.KeyCode == Enum.KeyCode.Tab then
+		isVisible = not isVisible
+		container.Visible = isVisible
+		if isVisible then
+			RefreshLeaderboard()
+		else
+			tooltip.Visible = false
+		end
+	end
+end)
+
+-- Mobile support
+task.spawn(function()
+	local virtualInput = ReplicatedStorage:WaitForChild("VirtualInput", 5)
+	if virtualInput then
+		local tabToggle = virtualInput:WaitForChild("TabToggle", 5)
+		if tabToggle then
+			tabToggle.Event:Connect(function(show)
+				isVisible = show
+				container.Visible = isVisible
+				if isVisible then
+					RefreshLeaderboard()
+				else
+					tooltip.Visible = false
+				end
+			end)
+		end
+	end
+end)
+
+------------------------------------------------------------------------
+-- AUTO-REFRESH
+------------------------------------------------------------------------
+
+Players.PlayerAdded:Connect(function(newPlayer)
+	if isVisible then
+		task.wait(2)
+		RefreshLeaderboard()
+	end
+end)
+
+Players.PlayerRemoving:Connect(function()
+	if isVisible then
+		task.wait(0.1)
+		RefreshLeaderboard()
+	end
+end)
+
+print("[CustomLeaderboard] System initialized.")
