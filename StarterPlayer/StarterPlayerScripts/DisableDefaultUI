@@ -1,0 +1,26 @@
+--[[
+    DisableDefaultUI (LocalScript)
+    Removes the default Roblox backpack/hotbar and health bar.
+    We replace these with our own custom versions.
+]]
+
+local StarterGui = game:GetService("StarterGui")
+
+-- Keep trying until it works (sometimes takes a frame)
+local function Disable()
+	local success = pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
+	end)
+	return success
+end
+
+-- Retry a few times in case it's not ready
+task.spawn(function()
+	for i = 1, 10 do
+		if Disable() then break end
+		task.wait(0.5)
+	end
+end)
+
+print("[DisableDefaultUI] Default backpack and playerlist disabled.")
