@@ -1,0 +1,179 @@
+--[[
+    OverheadDisplay (ModuleScript)
+    Creates overhead name + rank display above players.
+    Now uses DataManager directly.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+
+local PlayerDataConfig = require(ReplicatedStorage:WaitForChild("PlayerDataConfig"))
+local DataManager = require(ServerScriptService:WaitForChild("DataManager"))
+
+local OverheadDisplay = {}
+
+------------------------------------------------------------------------
+-- CREATE OVERHEAD
+------------------------------------------------------------------------
+
+function OverheadDisplay.CreateOverhead(character, player)
+	local data = DataManager.GetData(player)
+	if not data then return end
+
+	local head = character:WaitForChild("Head", 5)
+	if not head then return end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	end
+
+	local existing = head:FindFirstChild("OverheadGui")
+	if existing then existing:Destroy() end
+
+	local charName = (data.CharacterName ~= "" and data.CharacterName) or player.Name
+	local clan = data.Clan or ""
+	local rank = data.Rank or "E"
+	local officialGuild = data.OfficialGuild or ""
+	local unofficialGuildTag = data.UnofficialGuildTag or ""
+
+	-- Get guild info
+	local GuildConfig = require(ReplicatedStorage:WaitForChild("GuildConfig"))
+	local guildInfo = nil
+	if officialGuild ~= "" then
+		guildInfo = GuildConfig.GetGuildById(officialGuild)
+	end
+
+	-- Calculate height based on content
+	local totalHeight = 46 -- rank + name
+	if guildInfo then totalHeight = totalHeight + 18 end
+	if unofficialGuildTag ~= "" then totalHeight = totalHeight + 16 end
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "OverheadGui"
+	billboard.Size = UDim2.new(0, 220, 0, totalHeight)
+	billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+	billboard.AlwaysOnTop = false
+	billboard.MaxDistance = 50
+	billboard.Parent = head
+
+	local container = Instance.new("Frame")
+	container.Name = "Container"
+	container.Size = UDim2.new(1, 0, 1, 0)
+	container.BackgroundTransparency = 1
+	container.Parent = billboard
+
+	local yPos = 0
+
+	-- Rank label: [Rank E]
+	local rankLabel = Instance.new("TextLabel")
+	rankLabel.Name = "RankLabel"
+	rankLabel.Size = UDim2.new(1, 0, 0, 22)
+	rankLabel.Position = UDim2.new(0, 0, 0, yPos)
+	rankLabel.BackgroundTransparency = 1
+	rankLabel.Text = "[Rank " .. rank .. "]"
+	rankLabel.TextColor3 = Color3.fromRGB(180, 180, 190)
+	rankLabel.TextSize = 13
+	rankLabel.Font = Enum.Font.Gotham
+	rankLabel.TextStrokeTransparency = 0.5
+	rankLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	rankLabel.Parent = container
+	yPos = yPos + 22
+
+	-- Name + Clan: Sylphie Monarch
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Name = "NameLabel"
+	nameLabel.Size = UDim2.new(1, 0, 0, 24)
+	nameLabel.Position = UDim2.new(0, 0, 0, yPos)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.RichText = false
+	nameLabel.TextSize = 16
+	nameLabel.Font = Enum.Font.GothamBold
+	nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	nameLabel.TextStrokeTransparency = 0.4
+	nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	nameLabel.Parent = container
+
+	if clan ~= "" then
+		nameLabel.Text = charName .. " " .. clan
+	else
+		nameLabel.Text = charName
+	end
+	yPos = yPos + 24
+
+	-- Official guild title
+	if guildInfo then
+		local titleLabel = Instance.new("TextLabel")
+		titleLabel.Name = "GuildLabel"
+		titleLabel.Size = UDim2.new(1, 0, 0, 18)
+		titleLabel.Position = UDim2.new(0, 0, 0, yPos)
+		titleLabel.BackgroundTransparency = 1
+		titleLabel.Text = guildInfo.Title
+		titleLabel.TextSize = 13
+		titleLabel.Font = Enum.Font.GothamBold
+		titleLabel.TextStrokeTransparency = 0.4
+		titleLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+		titleLabel.Parent = container
+
+		if guildInfo.Gradient then
+			-- Gradient text for Monarch
+			titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+			local gradient = Instance.new("UIGradient")
+			gradient.Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, guildInfo.Color),
+				ColorSequenceKeypoint.new(1, guildInfo.GradientEnd),
+			})
+			gradient.Parent = titleLabel
+		elseif guildInfo.TitleColor then
+			titleLabel.TextColor3 = guildInfo.TitleColor
+		else
+			titleLabel.TextColor3 = guildInfo.Color
+		end
+
+		yPos = yPos + 18
+	end
+
+	-- Unofficial guild tag
+	if unofficialGuildTag ~= "" then
+		local tagLabel = Instance.new("TextLabel")
+		tagLabel.Name = "UnofficialTag"
+		tagLabel.Size = UDim2.new(1, 0, 0, 16)
+		tagLabel.Position = UDim2.new(0, 0, 0, yPos)
+		tagLabel.BackgroundTransparency = 1
+		tagLabel.RichText = true
+		tagLabel.Text = '<font color="rgb(255,255,255)">[</font><font color="rgb(255,217,64)">' .. unofficialGuildTag .. '</font><font color="rgb(255,255,255)">]</font>'
+		tagLabel.TextSize = 11
+		tagLabel.Font = Enum.Font.Gotham
+		tagLabel.TextStrokeTransparency = 0.5
+		tagLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+		tagLabel.Parent = container
+	end
+
+	print("[Overhead] Created display for " .. player.Name .. ": " .. charName .. " " .. clan)
+end
+
+------------------------------------------------------------------------
+-- CONNECTIONS
+------------------------------------------------------------------------
+
+local function OnPlayerAdded(player)
+	player.CharacterAdded:Connect(function(character)
+		task.wait(0.5)
+		OverheadDisplay.CreateOverhead(character, player)
+	end)
+
+	if player.Character then
+		task.wait(0.5)
+		OverheadDisplay.CreateOverhead(player.Character, player)
+	end
+end
+
+for _, player in ipairs(Players:GetPlayers()) do
+	OnPlayerAdded(player)
+end
+Players.PlayerAdded:Connect(OnPlayerAdded)
+
+print("[OverheadDisplay] System initialized.")
+
+return OverheadDisplay
